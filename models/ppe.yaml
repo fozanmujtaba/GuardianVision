@@ -1,0 +1,29 @@
+# Construction PPE Dataset Configuration
+# This file is used by Ultralytics YOLO for training on PPE detection
+
+# Dataset paths (will be downloaded automatically if using Ultralytics Hub)
+path: ../datasets/ppe  # dataset root dir
+train: images/train    # train images relative to 'path'
+val: images/val        # val images relative to 'path'
+
+# Classes
+names:
+  0: person
+  1: helmet
+  2: vest
+  3: gloves
+  4: boots
+  5: goggles
+
+# Number of classes
+nc: 6
+
+# Dataset info
+# This dataset is designed for industrial PPE compliance detection.
+# It contains annotations for workers and their safety equipment.
+#
+# To download:
+# yolo train data=ppe.yaml model=yolo11n.pt epochs=1 (will auto-download)
+#
+# Or manually download from:
+# https://universe.roboflow.com/ppe-detection-datasets

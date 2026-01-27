@@ -1,0 +1,22 @@
+# PPE Kit Detection (Construction Site Workers)
+# Kaggle Dataset: https://www.kaggle.com/datasets/viren92/ppe-kit-detection
+
+path: /Users/mac/projects/GuardianVision/scripts/datasets/ppe/data
+train: images/train
+val: images/val
+test: images/test
+
+# Classes
+names:
+  0: Hardhat
+  1: Mask
+  2: NO-Hardhat
+  3: NO-Mask
+  4: NO-Safety Vest
+  5: Person
+  6: Safety Cone
+  7: Safety Vest
+  8: machinery
+  9: vehicle
+
+nc: 10
