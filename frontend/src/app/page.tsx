@@ -39,6 +39,7 @@ export default function Dashboard() {
   useEffect(() => {
     const backendHost = "127.0.0.1:8000";
     ws.current = new WebSocket(`ws://${backendHost}/ws`);
+    ws.current.binaryType = "arraybuffer";
 
     ws.current.onopen = () => setIsConnected(true);
     ws.current.onclose = () => {
@@ -46,52 +47,54 @@ export default function Dashboard() {
       stopWebcam();
     };
 
-    ws.current.onmessage = (event) => {
-      console.log("📥 Received response from backend");
-      pendingFrameRef.current = false;
+    ws.current.onmessage = async (event) => {
+      // Handle binary response
+      if (event.data instanceof ArrayBuffer) {
+        const buffer = event.data;
+        const view = new DataView(buffer);
+        const jsonLen = view.getUint32(0);
 
-      const data = JSON.parse(event.data);
-      if (data.error) {
-        console.error("Backend error:", data.error, data.details);
+        const jsonBytes = new Uint8Array(buffer, 4, jsonLen);
+        const imgBytes = new Uint8Array(buffer, 4 + jsonLen);
+
+        const metadata = JSON.parse(new TextDecoder().decode(jsonBytes));
+
+        // Create URL for binary JPEG
+        const blob = new Blob([imgBytes], { type: "image/jpeg" });
+        const url = URL.createObjectURL(blob);
+
+        setStream((prev) => {
+          if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+          return url;
+        });
+
+        pendingFrameRef.current = false;
+
+        // Update state with metadata
+        if (metadata.response_actions?.emergency_mode) setIsEmergencyMode(true);
+        else setIsEmergencyMode(false);
+
+        if (metadata.response_actions?.voice_announcement) speak(metadata.response_actions.voice_announcement);
+        if (metadata.critical_events?.length > 0) setCriticalEvents(metadata.critical_events);
+        else setCriticalEvents([]);
+
+        if (metadata.alert && metadata.violations?.length > 0) {
+          const newAlert = {
+            id: Date.now(),
+            time: new Date().toLocaleTimeString(),
+            violations: metadata.violations,
+          };
+          setAlerts((prev) => [newAlert, ...prev].slice(0, 5));
+        }
+
+        frameCountRef.current++;
+        const now = Date.now();
+        if (now - lastFpsTimeRef.current >= 1000) {
+          setFps(frameCountRef.current);
+          frameCountRef.current = 0;
+          lastFpsTimeRef.current = now;
+        }
         return;
-      }
-      setStream(data.annotated_frame);
-
-      // Emergency Mode Logic
-      if (data.response_actions?.emergency_mode) {
-        setIsEmergencyMode(true);
-      } else {
-        setIsEmergencyMode(false);
-      }
-
-      // Voice Announcement
-      if (data.response_actions?.voice_announcement) {
-        speak(data.response_actions.voice_announcement);
-      }
-
-      // Update Alerts
-      if (data.critical_events?.length > 0) {
-        setCriticalEvents(data.critical_events);
-      } else {
-        setCriticalEvents([]);
-      }
-
-      // Calculate FPS
-      frameCountRef.current++;
-      const now = Date.now();
-      if (now - lastFpsTimeRef.current >= 1000) {
-        setFps(frameCountRef.current);
-        frameCountRef.current = 0;
-        lastFpsTimeRef.current = now;
-      }
-
-      if (data.alert && data.violations?.length > 0) {
-        const newAlert = {
-          id: Date.now(),
-          time: new Date().toLocaleTimeString(),
-          violations: data.violations,
-        };
-        setAlerts((prev) => [newAlert, ...prev].slice(0, 5));
       }
     };
 
@@ -181,32 +184,25 @@ export default function Dashboard() {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
           const startTime = performance.now();
-          // Lower quality for faster encoding - reduced to 0.5
-          const frameData = canvas.toDataURL("image/jpeg", 0.5);
-
-          if (frameCountRef.current % 30 === 0) {
-            console.log(`📤 Sending frame ${frameCountRef.current}, data length: ${frameData.length}`);
-          }
 
           pendingFrameRef.current = true; // Mark frame as pending
 
-          // Safety timeout to reset pending frame if backend doesn't respond
-          setTimeout(() => {
-            if (pendingFrameRef.current) {
-              console.warn("⏱️ Frame response timeout, resetting...");
-              pendingFrameRef.current = false;
+          // Send as binary blob (more efficient)
+          canvas.toBlob((blob) => {
+            if (blob && ws.current?.readyState === WebSocket.OPEN) {
+              ws.current.send(blob);
             }
-          }, 2000);
-
-          ws.current.send(frameData);
+          }, "image/jpeg", 0.4);
 
           setLatency(Math.round(performance.now() - startTime));
         }
 
-        // Continue loop only if still streaming
-        if (isStreamingRef.current) {
-          requestAnimationFrame(sendFrame);
-        }
+        // Limit frame rate to ~15fps for stability
+        setTimeout(() => {
+          if (isStreamingRef.current) {
+            requestAnimationFrame(sendFrame);
+          }
+        }, 66);
       };
 
       // Start after video is ready

@@ -172,12 +172,31 @@ async def websocket_endpoint(websocket: WebSocket):
     frame_count = 0
     try:
         while True:
-            data = await websocket.receive_text()
+            # Handle both Text (Base64) and Binary (Blob)
+            msg = await websocket.receive()
             frame_count += 1
             
-            if frame_count == 1:
-                print(f"📸 First frame received! Data length: {len(data)}")
-            
+            if "text" in msg:
+                data = msg["text"]
+                # Decode base64 image
+                try:
+                    if "," in data:
+                        _, encoded = data.split(",", 1)
+                    else:
+                        encoded = data
+                    img_data = base64.b64decode(encoded)
+                    nparr = np.frombuffer(img_data, np.uint8)
+                    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                except Exception as e:
+                    print(f"Frame decode error: {e}")
+                    continue
+            elif "bytes" in msg:
+                data = msg["bytes"]
+                nparr = np.frombuffer(data, np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            else:
+                continue
+
             # Process every 2nd frame to reduce lag (skip odd frames)
             if frame_count % 2 != 0:
                 continue
@@ -185,28 +204,14 @@ async def websocket_endpoint(websocket: WebSocket):
             if frame_count % 30 == 0:
                 print(f"📦 Received frame ${frame_count}")
             
-            # Decode base64 image
-            try:
-                if "," in data:
-                    _, encoded = data.split(",", 1)
-                else:
-                    encoded = data
-                img_data = base64.b64decode(encoded)
-                nparr = np.frombuffer(img_data, np.uint8)
-                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            except Exception as e:
-                print(f"Frame decode error: {e}")
-                await websocket.send_text(json.dumps({"error": "Decode error", "details": str(e)}))
-                continue
-            
             if frame is None:
                 continue
 
             processed_frame = preprocess_frame(frame)
             
-            # Run inference with tracking (BoTSORT) - Optimizing imgsz for speed
+            # Run inference with tracking (ByteTrack) - Faster than BoTSORT
             inf_start = time.time()
-            results = model.track(processed_frame, device=device, persist=True, verbose=False, imgsz=480)
+            results = model.track(processed_frame, device=device, persist=True, verbose=False, imgsz=480, tracker="bytetrack.yaml")
             inf_time = (time.time() - inf_start) * 1000
             
             if frame_count % 30 == 0:
@@ -236,12 +241,10 @@ async def websocket_endpoint(websocket: WebSocket):
             # Annotate frame
             annotated = annotate_frame(processed_frame.copy(), detections, violations)
             
-            # Encode response
+            # Binary Response: Reduce Base64 overhead
             _, buffer = cv2.imencode('.jpg', annotated)
-            annotated_base64 = base64.b64encode(buffer).decode('utf-8')
-
-            response = {
-                "annotated_frame": f"data:image/jpeg;base64,{annotated_base64}",
+            
+            response_metadata = {
                 "detections": detections,
                 "violations": violations,
                 "critical_events": critical_events,
@@ -250,7 +253,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 "device": device
             }
             
-            await websocket.send_text(json.dumps(response))
+            metadata_json = json.dumps(response_metadata).encode('utf-8')
+            # Format: [4 bytes JSON length] [JSON] [JPEG]
+            message = len(metadata_json).to_bytes(4, byteorder='big') + metadata_json + buffer.tobytes()
+            
+            await websocket.send_bytes(message)
             
     except WebSocketDisconnect:
         print("🔌 Client disconnected")
