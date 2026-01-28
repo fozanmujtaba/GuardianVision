@@ -19,9 +19,10 @@ from ultralytics import YOLO
 from auditor import PPEAuditor
 from camera import CameraStream, FrameSimulator
 from analytics import AnalyticsManager
+from response_manager import response_manager
 
-# Configuration
-MODEL_PATH = os.environ.get("MODEL_PATH", "../models/ppe_model.pt")
+# Configuration (Defaults)
+DEFAULT_MODEL_PATH = "../models/ppe_model.pt"
 FALLBACK_MODEL = "yolo11n.pt"
 
 # Global state
@@ -30,6 +31,7 @@ device = None
 auditor = None
 camera_task = None
 analytics = None
+SIMULATION_MODE = os.environ.get("SIMULATION_MODE", "false").lower() == "true"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -39,12 +41,15 @@ async def lifespan(app: FastAPI):
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     print(f"🚀 Device: {device}")
     
+    # Determine model path dynamically
+    current_model_path = os.environ.get("MODEL_PATH", DEFAULT_MODEL_PATH)
+    
     # Load custom PPE model if available, otherwise fallback
-    if os.path.exists(MODEL_PATH):
-        print(f"📦 Loading PPE model: {MODEL_PATH}")
-        model = YOLO(MODEL_PATH)
+    if os.path.exists(current_model_path):
+        print(f"📦 Loading custom safety model: {current_model_path}")
+        model = YOLO(current_model_path)
     else:
-        print(f"⚠️ PPE model not found, using fallback: {FALLBACK_MODEL}")
+        print(f"⚠️ Custom model not found at {current_model_path}, using fallback: {FALLBACK_MODEL}")
         model = YOLO(FALLBACK_MODEL)
     
     model.to(device)
@@ -94,18 +99,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Class name mapping for Kaggle PPE dataset
+# Comprehensive Safety Classes (24 Classes)
 CLASS_NAMES = {
-    0: "Hardhat",
-    1: "Mask",
-    2: "NO-Hardhat",
-    3: "NO-Mask",
-    4: "NO-Safety Vest",
-    5: "Person",
-    6: "Safety Cone",
-    7: "Safety Vest",
-    8: "machinery",
-    9: "vehicle"
+    0: "Hardhat", 1: "Mask", 2: "NO-Hardhat", 3: "NO-Mask", 4: "NO-Safety Vest", 
+    5: "Person", 6: "Safety Cone", 7: "Safety Vest", 8: "machinery", 9: "vehicle",
+    10: "Fire", 11: "Smoke", 12: "Emergency Exit Sign", 13: "Fire Extinguisher", 
+    14: "Fall Detected", 15: "Sitting", 16: "Fire Blanket", 17: "Manual Call Point", 
+    18: "Smoke Detector", 19: "Wall Hydrant Sign", 20: "Fire Extinguisher Sign Old", 
+    21: "Call Point Sign", 22: "Fire Door Sign", 23: "Fire Extinguisher Sign"
 }
 
 def preprocess_frame(frame):
@@ -136,9 +137,11 @@ def annotate_frame(frame, detections, violations):
     """Draw bounding boxes and labels on frame."""
     for det in detections:
         x1, y1, x2, y2 = map(int, det["bbox"])
-        color = (0, 255, 0)  # Green for PPE
-        if det["class"] == 0:  # Person
+        if det["class"] == 5:  # Person
             color = (255, 200, 0)  # Cyan for person
+        elif det["class"] in [10, 11, 14]: # Fire, Smoke, Fall
+            color = (0, 0, 255) # Red for critical
+        
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
         label = f"{det['class_name']} {det['conf']:.2f}"
         cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
@@ -186,11 +189,23 @@ async def websocket_endpoint(websocket: WebSocket):
             results = model.track(processed_frame, device=device, persist=True, verbose=False)
             detections = process_detections(results)
             
-            # Audit for violations (with temporal smoothing and evidence capture)
-            violations, alert_triggered = auditor.audit_frame(detections, frame=processed_frame)
+            # Audit for violations and emergency threats
+            violations, alert_triggered, critical_events = auditor.audit_frame(detections, frame=processed_frame)
             
-            # Log analytics (tracks person count and violations)
-            person_count = len([d for d in detections if d['class'] == 5]) # Class 5 is Person
+            # Simulation Mode: Inject synthetic events if enabled
+            if SIMULATION_MODE:
+                import time
+                # Every 30 seconds, inject a random simulation event
+                if int(time.time()) % 60 < 2:
+                    critical_events.append({"type": "SIMULATED_FIRE", "location": "Backend Server Room", "bbox": [100, 100, 300, 300]})
+                elif 30 <= int(time.time()) % 60 < 32:
+                    critical_events.append({"type": "SIMULATED_MAN_DOWN", "location": "Construction Zone A", "bbox": [200, 200, 400, 400]})
+            
+            # Response Manager (Critical alerts)
+            response_actions = response_manager.process_critical_events(critical_events)
+            
+            # Log analytics
+            person_count = len([d for d in detections if d['class'] == 5])
             analytics.log_frame(person_count, violations)
             
             # Annotate frame
@@ -204,7 +219,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 "annotated_frame": f"data:image/jpeg;base64,{annotated_base64}",
                 "detections": detections,
                 "violations": violations,
+                "critical_events": critical_events,
                 "alert": alert_triggered,
+                "response_actions": response_actions,
                 "device": device
             }
             
@@ -238,8 +255,19 @@ async def camera_stream_endpoint(websocket: WebSocket):
             # Run inference with tracking (BoTSORT)
             results = model.track(processed_frame, device=device, persist=True, verbose=False)
             detections = process_detections(results)
-            # Audit for violations (with temporal smoothing and evidence capture)
-            violations, alert_triggered = auditor.audit_frame(detections, frame=processed_frame)
+            # Audit for violations and emergency threats
+            violations, alert_triggered, critical_events = auditor.audit_frame(detections, frame=processed_frame)
+            
+            # Simulation Mode: Inject synthetic events if enabled
+            if SIMULATION_MODE:
+                import time
+                if int(time.time()) % 60 < 2:
+                    critical_events.append({"type": "SIMULATED_FIRE", "location": "Backend Server Room", "bbox": [100, 100, 300, 300]})
+                elif 30 <= int(time.time()) % 60 < 32:
+                    critical_events.append({"type": "SIMULATED_MAN_DOWN", "location": "Construction Zone A", "bbox": [200, 200, 400, 400]})
+
+            # Response Manager
+            response_actions = response_manager.process_critical_events(critical_events)
             
             # Log analytics
             person_count = len([d for d in detections if d['class'] == 5])
@@ -253,7 +281,9 @@ async def camera_stream_endpoint(websocket: WebSocket):
                 "annotated_frame": f"data:image/jpeg;base64,{annotated_base64}",
                 "detections": detections,
                 "violations": violations,
+                "critical_events": critical_events,
                 "alert": alert_triggered,
+                "response_actions": response_actions,
                 "device": device
             }
             
@@ -294,9 +324,13 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
     parser.add_argument("--model", default=None, help="Path to YOLO model weights")
+    parser.add_argument("--simulate", action="store_true", help="Enable simulation mode for emergency events")
     args = parser.parse_args()
     
     if args.model:
         os.environ["MODEL_PATH"] = args.model
+    if args.simulate:
+        os.environ["SIMULATION_MODE"] = "true"
+        print("🛠️ Simulation Mode ENABLED")
     
     uvicorn.run(app, host=args.host, port=args.port)

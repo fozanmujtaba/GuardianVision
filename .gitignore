@@ -165,3 +165,17 @@ yarn-error.log*
 # Application Violations (Artifacts)
 backend/violations/
 backend/test_camera.py
+
+# Datasets and Training Runs (Large Files)
+scripts/datasets/
+scripts/mega_dataset/
+scripts/runs/
+backend/datasets/
+backend/runs/
+runs/
+*.yaml
+!backend/requirements.txt
+!frontend/package.json
+
+# Local scripts
+start_all.sh

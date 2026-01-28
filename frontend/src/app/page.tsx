@@ -13,15 +13,27 @@ export default function Dashboard() {
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [stats, setStats] = useState<any>(null);
   const [violationFiles, setViolationFiles] = useState<string[]>([]);
+  const [isEmergencyMode, setIsEmergencyMode] = useState(false);
+  const [criticalEvents, setCriticalEvents] = useState<any[]>([]);
 
   const ws = useRef<WebSocket | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const isStreamingRef = useRef(false); // Use ref for immediate stop
+  const isStreamingRef = useRef(false);
   const frameCountRef = useRef(0);
   const lastFpsTimeRef = useRef(Date.now());
-  const pendingFrameRef = useRef(false); // Prevent frame queue buildup
+  const pendingFrameRef = useRef(false);
+
+  // Voice Announcement Helper
+  const speak = (text: string) => {
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 0.9;
+      utterance.pitch = 1;
+      window.speechSynthesis.speak(utterance);
+    }
+  };
 
   // Connect to WebSocket
   useEffect(() => {
@@ -34,10 +46,29 @@ export default function Dashboard() {
     };
 
     ws.current.onmessage = (event) => {
-      pendingFrameRef.current = false; // Frame processed, allow next
+      pendingFrameRef.current = false;
 
       const data = JSON.parse(event.data);
       setStream(data.annotated_frame);
+
+      // Emergency Mode Logic
+      if (data.response_actions?.emergency_mode) {
+        setIsEmergencyMode(true);
+      } else {
+        setIsEmergencyMode(false);
+      }
+
+      // Voice Announcement
+      if (data.response_actions?.voice_announcement) {
+        speak(data.response_actions.voice_announcement);
+      }
+
+      // Update Alerts
+      if (data.critical_events?.length > 0) {
+        setCriticalEvents(data.critical_events);
+      } else {
+        setCriticalEvents([]);
+      }
 
       // Calculate FPS
       frameCountRef.current++;
@@ -198,16 +229,16 @@ export default function Dashboard() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 p-8 font-sans">
+    <div className={`min-h-screen transition-colors duration-500 p-8 font-sans ${isEmergencyMode ? 'bg-red-950 animate-pulse-slow' : 'bg-slate-950'} text-slate-100`}>
       {/* Hidden video and canvas for capture */}
       <video ref={videoRef} className="hidden" playsInline muted />
       <canvas ref={canvasRef} className="hidden" />
 
       {/* Header */}
-      <div className="flex justify-between items-center mb-10 border-b border-slate-800 pb-6">
+      <div className={`flex justify-between items-center mb-10 border-b pb-6 ${isEmergencyMode ? 'border-red-500/50' : 'border-slate-800'}`}>
         <div>
-          <h1 className="text-4xl font-black bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">
-            GUARDIAN VISION
+          <h1 className={`text-4xl font-black ${isEmergencyMode ? 'text-red-500' : 'bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent'}`}>
+            GUARDIAN VISION {isEmergencyMode && "• EMERGENCY MODE"}
           </h1>
           <p className="text-slate-400 text-sm mt-1 uppercase tracking-widest">
             Visual Compliance Auditor • Real-Time Engine
@@ -276,7 +307,25 @@ export default function Dashboard() {
 
             {/* Sidebar Alerts */}
             <div className="space-y-6">
-              <div className="bg-slate-900/50 rounded-3xl p-6 border border-slate-800 backdrop-blur-sm min-h-[400px]">
+              {/* Critical Events Section */}
+              {criticalEvents.length > 0 && (
+                <div className="bg-red-900/40 rounded-3xl p-6 border-2 border-red-500 animate-pulse">
+                  <div className="flex items-center gap-3 mb-4">
+                    <ShieldAlert className="text-white" />
+                    <h2 className="text-xl font-bold text-white uppercase italic">CRITICAL THREATS</h2>
+                  </div>
+                  <div className="space-y-3">
+                    {criticalEvents.map((event, i) => (
+                      <div key={i} className="bg-white/10 p-3 rounded-xl border border-white/20">
+                        <div className="font-black text-white">{event.type}</div>
+                        <div className="text-red-200 text-[10px] font-bold uppercase">{event.location}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-slate-900/50 rounded-3xl p-6 border border-slate-800 backdrop-blur-sm min-h-[300px]">
                 <div className="flex items-center gap-3 mb-6">
                   <ShieldAlert className="text-rose-500" />
                   <h2 className="text-xl font-bold italic uppercase tracking-tight">Active Violations</h2>

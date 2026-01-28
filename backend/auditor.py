@@ -54,96 +54,94 @@ class PPEAuditor:
         cooldown_active = (current_time - self.last_alert_time) < self.cooldown_seconds
         
         # Track active IDs for cleanup
+        # 1. Process People (PPE & Falls)
         active_ids = {p.get('id') for p in people}
-        
         for person in people:
             p_id = person.get('id', 'unknown')
             p_box = person['bbox']
             
-            # Initialize counters for new person
             if p_id not in self.persistence_counters:
-                self.persistence_counters[p_id] = {"Hardhat": 0, "Safety Vest": 0}
+                self.persistence_counters[p_id] = {"Hardhat": 0, "Safety Vest": 0, "FALL": 0}
                 self.snapped_violations[p_id] = set()
             
-            # 1. Hardhat Check
+            # PPE Logic (Stayed mostly the same)
             has_no_hardhat = any(self._box_is_inside(d['bbox'], p_box) for d in neg_hardhats)
             has_hardhat = any(self._box_is_inside(d['bbox'], p_box) for d in pos_hardhats)
-            
-            if has_no_hardhat or not has_hardhat:
+            if has_no_hardhat or (not has_hardhat and len(pos_hardhats) + len(neg_hardhats) > 0):
                 self.persistence_counters[p_id]["Hardhat"] += 1
             else:
                 self.persistence_counters[p_id]["Hardhat"] = 0
                 
-            # 2. Vest Check
             has_no_vest = any(self._box_is_inside(d['bbox'], p_box) for d in neg_vests)
             has_vest = any(self._box_is_inside(d['bbox'], p_box) for d in pos_vests)
-            
-            if has_no_vest or not has_vest:
+            if has_no_vest or (not has_vest and len(pos_vests) + len(neg_vests) > 0):
                 self.persistence_counters[p_id]["Safety Vest"] += 1
             else:
                 self.persistence_counters[p_id]["Safety Vest"] = 0
 
-            # Determine persistent violations
-            per_violations = []
-            new_snaps = []
-            
+            # Determine persistent PPE violations
+            pers_v = []
             if self.persistence_counters[p_id]["Hardhat"] >= self.persistence_threshold:
-                per_violations.append("Hardhat")
-                if "Hardhat" not in self.snapped_violations[p_id]:
-                    new_snaps.append("Hardhat")
-            
+                pers_v.append("Hardhat")
             if self.persistence_counters[p_id]["Safety Vest"] >= self.persistence_threshold:
-                per_violations.append("Safety Vest")
-                if "Safety Vest" not in self.snapped_violations[p_id]:
-                    new_snaps.append("Safety Vest")
+                pers_v.append("Safety Vest")
 
-            if per_violations:
-                active_violations.append({
-                    "person_id": p_id,
-                    "bbox": p_box,
-                    "violations": per_violations
-                })
-                
-                # Take snapshot for new persistent violations
-                if new_snaps and frame is not None:
-                    self._save_snapshot(frame, person, new_snaps)
-                    for v_type in new_snaps:
-                        self.snapped_violations[p_id].add(v_type)
+            if pers_v:
+                active_violations.append({"person_id": p_id, "bbox": p_box, "violations": pers_v})
+                if not cooldown_active and any(v not in self.snapped_violations[p_id] for v in pers_v):
+                    self._save_snapshot(frame, person, pers_v, "VIOLATION")
+                    for v in pers_v: self.snapped_violations[p_id].add(v)
 
-        # Cleanup counters for IDs that left the scene
-        ids_to_remove = set(self.persistence_counters.keys()) - active_ids
-        for rid in ids_to_remove:
-            del self.persistence_counters[rid]
-            del self.snapped_violations[rid]
+        # 2. Proactive Asset Audit (Equipment presence)
+        # Check for mandatory equipment in the scene
+        extinguishers = [d for d in detections if d['class'] in [self.classes['Fire Extinguisher']]]
+        exit_signs = [d for d in detections if d['class'] in [self.classes['Emergency Exit Sign']]]
+        
+        compliance_warnings = []
+        if not extinguishers:
+            compliance_warnings.append("NO_EXTINGUISHER_IN_VIEW")
+        if not exit_signs:
+            compliance_warnings.append("NO_EXIT_SIGN_IN_VIEW")
 
-        # Alert logic
-        if active_violations and not cooldown_active:
+        # 3. Process Critical Events (Fire, Smoke, Fall)
+        for f in fires:
+            critical_events.append({"type": "FIRE", "bbox": f['bbox'], "location": "Zone 1"})
+        for s in smokes:
+            critical_events.append({"type": "SMOKE", "bbox": s['bbox'], "location": "Zone 1"})
+        for fall in falls:
+            critical_events.append({"type": "MAN-DOWN", "bbox": fall['bbox'], "location": "Zone 1"})
+
+        # Cleanup counters
+        for rid in list(self.persistence_counters.keys()):
+            if rid not in active_ids:
+                del self.persistence_counters[rid]
+                del self.snapped_violations[rid]
+
+        if (active_violations or critical_events or compliance_warnings) and not cooldown_active:
             self.last_alert_time = current_time
             alert_triggered = True
             
-        return active_violations, alert_triggered
+        return active_violations, alert_triggered, critical_events, compliance_warnings
 
-    def _save_snapshot(self, frame: np.ndarray, person: Dict, violations: List[str]):
-        """Save a JPEG evidence snapshot of the violation."""
+    def _save_snapshot(self, frame: np.ndarray, obj: Dict, labels: List[str], prefix="EVENT"):
+        """Save a JPEG evidence snapshot of the violation or event."""
+        if frame is None: return
         import cv2
         from datetime import datetime
-        
-        p_id = person.get('id', 'unknown')
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        v_str = "_".join(violations).lower().replace(" ", "")
-        filename = f"violations/violation_{p_id}_{v_str}_{timestamp}.jpg"
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         # Draw on the snapshot for evidence
         evidence_frame = frame.copy()
-        x1, y1, x2, y2 = map(int, person['bbox'])
+        x1, y1, x2, y2 = map(int, obj['bbox'])
         cv2.rectangle(evidence_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-        cv2.putText(evidence_frame, f"VIOLATION: {', '.join(violations)}", 
+        cv2.putText(evidence_frame, f"{prefix}: {', '.join(labels)}", 
                     (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-        
-        cv2.imwrite(filename, evidence_frame)
-        print(f"📸 Captured violation evidence: {filename}")
 
-    def _box_is_inside(self, inner: List[float], outer: List[float]) -> bool:
+        filename = f"violations/{prefix}_{ts}.jpg"
+        cv2.imwrite(filename, evidence_frame)
+        print(f"📸 Captured {prefix} evidence: {filename}")
+
+    def _box_is_inside(self, inner, outer) -> bool:
         """Check if center of inner box is within outer box."""
         center_x = (inner[0] + inner[2]) / 2
         center_y = (inner[1] + inner[3]) / 2
