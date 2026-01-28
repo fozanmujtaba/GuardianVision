@@ -39,6 +39,8 @@ async def lifespan(app: FastAPI):
     global model, device, auditor, analytics
     
     device = "mps" if torch.backends.mps.is_available() else "cpu"
+    if os.environ.get("FORCE_CPU", "false").lower() == "true":
+        device = "cpu"
     print(f"🚀 Device: {device}")
     
     # Determine model path dynamically
@@ -110,9 +112,8 @@ CLASS_NAMES = {
 }
 
 def preprocess_frame(frame):
-    """OpenCV edge processing: resize, noise reduction."""
-    frame = cv2.resize(frame, (640, 640))
-    frame = cv2.GaussianBlur(frame, (5, 5), 0)
+    """OpenCV processing: resize to 480x480 for faster inference."""
+    frame = cv2.resize(frame, (480, 480))
     return frame
 
 def process_detections(results):
@@ -137,10 +138,15 @@ def annotate_frame(frame, detections, violations):
     """Draw bounding boxes and labels on frame."""
     for det in detections:
         x1, y1, x2, y2 = map(int, det["bbox"])
+        # Default color: Gray
+        color = (150, 150, 150)
+        
         if det["class"] == 5:  # Person
             color = (255, 200, 0)  # Cyan for person
         elif det["class"] in [10, 11, 14]: # Fire, Smoke, Fall
             color = (0, 0, 255) # Red for critical
+        elif det["class"] in [0, 7]: # Hardhat, Safety Vest
+            color = (0, 255, 255) # Yellow/Gold
         
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
         label = f"{det['class_name']} {det['conf']:.2f}"
@@ -162,10 +168,22 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     print("🔌 Client connected")
     
+    import time
+    frame_count = 0
     try:
         while True:
             data = await websocket.receive_text()
-            print(f"📦 Received frame data, length: {len(data)}")
+            frame_count += 1
+            
+            if frame_count == 1:
+                print(f"📸 First frame received! Data length: {len(data)}")
+            
+            # Process every 2nd frame to reduce lag (skip odd frames)
+            if frame_count % 2 != 0:
+                continue
+            
+            if frame_count % 30 == 0:
+                print(f"📦 Received frame ${frame_count}")
             
             # Decode base64 image
             try:
@@ -178,6 +196,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             except Exception as e:
                 print(f"Frame decode error: {e}")
+                await websocket.send_text(json.dumps({"error": "Decode error", "details": str(e)}))
                 continue
             
             if frame is None:
@@ -185,8 +204,14 @@ async def websocket_endpoint(websocket: WebSocket):
 
             processed_frame = preprocess_frame(frame)
             
-            # Run inference with tracking (BoTSORT)
-            results = model.track(processed_frame, device=device, persist=True, verbose=False)
+            # Run inference with tracking (BoTSORT) - Optimizing imgsz for speed
+            inf_start = time.time()
+            results = model.track(processed_frame, device=device, persist=True, verbose=False, imgsz=480)
+            inf_time = (time.time() - inf_start) * 1000
+            
+            if frame_count % 30 == 0:
+                print(f"⏱️ Inference process {frame_count}: {inf_time:.2f}ms")
+            
             detections = process_detections(results)
             
             # Audit for violations and emergency threats
@@ -231,6 +256,10 @@ async def websocket_endpoint(websocket: WebSocket):
         print("🔌 Client disconnected")
     except Exception as e:
         print(f"WebSocket error: {e}")
+        try:
+            await websocket.send_text(json.dumps({"error": "Internal error", "details": str(e)}))
+        except:
+            pass
 
 @app.websocket("/ws/camera")
 async def camera_stream_endpoint(websocket: WebSocket):

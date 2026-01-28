@@ -47,9 +47,14 @@ export default function Dashboard() {
     };
 
     ws.current.onmessage = (event) => {
+      console.log("📥 Received response from backend");
       pendingFrameRef.current = false;
 
       const data = JSON.parse(event.data);
+      if (data.error) {
+        console.error("Backend error:", data.error, data.details);
+        return;
+      }
       setStream(data.annotated_frame);
 
       // Emergency Mode Logic
@@ -132,6 +137,7 @@ export default function Dashboard() {
         }
       });
 
+      console.log("📸 Camera stream acquired");
       streamRef.current = mediaStream;
       isStreamingRef.current = true;
       setIsStreaming(true);
@@ -170,15 +176,28 @@ export default function Dashboard() {
         const ctx = canvas.getContext("2d");
 
         if (ctx && video.readyState === video.HAVE_ENOUGH_DATA) {
-          canvas.width = 640;
+          canvas.width = 480;
           canvas.height = 480;
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
           const startTime = performance.now();
-          // Lower quality for faster encoding
-          const frameData = canvas.toDataURL("image/jpeg", 0.6);
+          // Lower quality for faster encoding - reduced to 0.5
+          const frameData = canvas.toDataURL("image/jpeg", 0.5);
+
+          if (frameCountRef.current % 30 === 0) {
+            console.log(`📤 Sending frame ${frameCountRef.current}, data length: ${frameData.length}`);
+          }
 
           pendingFrameRef.current = true; // Mark frame as pending
+
+          // Safety timeout to reset pending frame if backend doesn't respond
+          setTimeout(() => {
+            if (pendingFrameRef.current) {
+              console.warn("⏱️ Frame response timeout, resetting...");
+              pendingFrameRef.current = false;
+            }
+          }, 2000);
+
           ws.current.send(frameData);
 
           setLatency(Math.round(performance.now() - startTime));

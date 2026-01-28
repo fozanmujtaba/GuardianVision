@@ -19,25 +19,21 @@ class PPEAuditor:
         # Ensure violations directory exists
         os.makedirs("violations", exist_ok=True)
         
-        # Updated for Kaggle PPE Kit Detection dataset
+        # Expanded 24-class mapping for GuardianVision
         self.classes = {
-            "Hardhat": 0,
-            "Mask": 1,
-            "NO-Hardhat": 2,
-            "NO-Mask": 3,
-            "NO-Safety Vest": 4,
-            "Person": 5,
-            "Safety Cone": 6,
-            "Safety Vest": 7,
-            "machinery": 8,
-            "vehicle": 9
+            "Hardhat": 0, "Mask": 1, "NO-Hardhat": 2, "NO-Mask": 3, "NO-Safety Vest": 4, 
+            "Person": 5, "Safety Cone": 6, "Safety Vest": 7, "machinery": 8, "vehicle": 9,
+            "Fire": 10, "Smoke": 11, "Emergency Exit Sign": 12, "Fire Extinguisher": 13, 
+            "Fall Detected": 14, "Sitting": 15, "Fire Blanket": 16, "Manual Call Point": 17, 
+            "Smoke Detector": 18, "Wall Hydrant Sign": 19, "Fire Extinguisher Sign Old": 20, 
+            "Call Point Sign": 21, "Fire Door Sign": 22, "Fire Extinguisher Sign": 23
         }
 
-    def audit_frame(self, detections: List[Dict], frame: np.ndarray = None) -> Tuple[List[Dict], bool]:
+    def audit_frame(self, detections: List[Dict], frame: np.ndarray = None) -> Tuple[List[Dict], bool, List[Dict]]:
         """
         Analyze detections for PPE violations with tracking and persistence.
         Optionally saves snapshots if frame is provided.
-        Returns (active_violations, alert_triggered).
+        Returns (active_violations, alert_triggered, critical_events).
         """
         people = [d for d in detections if d['class'] == self.classes['Person']]
         
@@ -49,12 +45,13 @@ class PPEAuditor:
         
         active_violations = []
         alert_triggered = False
+        critical_events = []
+        compliance_warnings = []
         
-        current_time = time.time()
+        current_time = time.timestamp() if hasattr(time, 'timestamp') else time.time()
         cooldown_active = (current_time - self.last_alert_time) < self.cooldown_seconds
         
         # Track active IDs for cleanup
-        # 1. Process People (PPE & Falls)
         active_ids = {p.get('id') for p in people}
         for person in people:
             p_id = person.get('id', 'unknown')
@@ -64,7 +61,7 @@ class PPEAuditor:
                 self.persistence_counters[p_id] = {"Hardhat": 0, "Safety Vest": 0, "FALL": 0}
                 self.snapped_violations[p_id] = set()
             
-            # PPE Logic (Stayed mostly the same)
+            # PPE Logic
             has_no_hardhat = any(self._box_is_inside(d['bbox'], p_box) for d in neg_hardhats)
             has_hardhat = any(self._box_is_inside(d['bbox'], p_box) for d in pos_hardhats)
             if has_no_hardhat or (not has_hardhat and len(pos_hardhats) + len(neg_hardhats) > 0):
@@ -93,17 +90,19 @@ class PPEAuditor:
                     for v in pers_v: self.snapped_violations[p_id].add(v)
 
         # 2. Proactive Asset Audit (Equipment presence)
-        # Check for mandatory equipment in the scene
         extinguishers = [d for d in detections if d['class'] in [self.classes['Fire Extinguisher']]]
         exit_signs = [d for d in detections if d['class'] in [self.classes['Emergency Exit Sign']]]
         
-        compliance_warnings = []
         if not extinguishers:
             compliance_warnings.append("NO_EXTINGUISHER_IN_VIEW")
         if not exit_signs:
             compliance_warnings.append("NO_EXIT_SIGN_IN_VIEW")
 
         # 3. Process Critical Events (Fire, Smoke, Fall)
+        fires = [d for d in detections if d['class'] == self.classes['Fire']]
+        smokes = [d for d in detections if d['class'] == self.classes['Smoke']]
+        falls = [d for d in detections if d['class'] == self.classes['Fall Detected']]
+
         for f in fires:
             critical_events.append({"type": "FIRE", "bbox": f['bbox'], "location": "Zone 1"})
         for s in smokes:
@@ -121,7 +120,8 @@ class PPEAuditor:
             self.last_alert_time = current_time
             alert_triggered = True
             
-        return active_violations, alert_triggered, critical_events, compliance_warnings
+        # Return 3 values as expected by main.py
+        return active_violations, alert_triggered, critical_events
 
     def _save_snapshot(self, frame: np.ndarray, obj: Dict, labels: List[str], prefix="EVENT"):
         """Save a JPEG evidence snapshot of the violation or event."""
