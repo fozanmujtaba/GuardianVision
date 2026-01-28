@@ -54,4 +54,4 @@ GuardianVision successfully demonstrates how AI can be deployed to create safer 
 - Integration with workplace communication tools like Slack or Microsoft Teams.
 
 ---
-**PROJECT SUBMITTED IN PARTIAL FULFILLMENT OF THE REQUIREMENTS FOR [User to insert Degree/Semester].**
+
