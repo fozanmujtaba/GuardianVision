@@ -37,7 +37,8 @@ export default function Dashboard() {
 
   // Connect to WebSocket
   useEffect(() => {
-    ws.current = new WebSocket("ws://localhost:8000/ws");
+    const backendHost = "127.0.0.1:8000";
+    ws.current = new WebSocket(`ws://${backendHost}/ws`);
 
     ws.current.onopen = () => setIsConnected(true);
     ws.current.onclose = () => {
@@ -98,11 +99,12 @@ export default function Dashboard() {
   // Fetch Analytics
   const fetchAnalytics = async () => {
     try {
-      const res = await fetch("http://localhost:8000/api/analytics");
+      const backendUrl = "http://127.0.0.1:8000";
+      const res = await fetch(`${backendUrl}/api/analytics`);
       const data = await res.json();
       setStats(data);
 
-      const vRes = await fetch("http://localhost:8000/api/violations");
+      const vRes = await fetch("http://127.0.0.1:8000/api/violations");
       const vData = await vRes.json();
       setViolationFiles(vData.violations);
     } catch (err) {
@@ -395,7 +397,7 @@ export default function Dashboard() {
                     {violationFiles.map((file) => (
                       <div key={file} className="group relative aspect-square bg-slate-800 rounded-xl overflow-hidden border border-slate-700 hover:border-blue-500/50 transition-all">
                         <img
-                          src={`http://localhost:8000/violations/${file}`}
+                          src={`http://127.0.0.1:8000/violations/${file}`}
                           className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
                           alt="Violation"
                         />
