@@ -348,6 +348,15 @@ async def get_recorded_violations():
     files = glob.glob("violations/*.jpg")
     return {"violations": [os.path.basename(f) for f in files]}
 
+@app.delete("/api/violations")
+async def clear_violations():
+    """Delete all violation evidence images."""
+    import glob
+    files = glob.glob("violations/*.jpg")
+    for f in files:
+        os.remove(f)
+    return {"deleted": len(files)}
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
