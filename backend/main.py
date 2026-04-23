@@ -238,10 +238,10 @@ async def websocket_endpoint(websocket: WebSocket):
             # Response Manager (Critical alerts)
             response_actions = response_manager.process_critical_events(critical_events)
             
-            # Log analytics
+            # Log analytics — only count violation events, not every frame
             person_count = len([d for d in detections if d['class'] == 5])
-            analytics.log_frame(person_count, violations)
-            
+            analytics.log_frame(person_count, violations if alert_triggered else [])
+
             # Annotate frame
             annotated = annotate_frame(processed_frame.copy(), detections, violations)
             
@@ -309,10 +309,10 @@ async def camera_stream_endpoint(websocket: WebSocket):
             # Response Manager
             response_actions = response_manager.process_critical_events(critical_events)
             
-            # Log analytics
+            # Log analytics — only count violation events, not every frame
             person_count = len([d for d in detections if d['class'] == 5])
-            analytics.log_frame(person_count, violations)
-            
+            analytics.log_frame(person_count, violations if alert_triggered else [])
+
             annotated = annotate_frame(processed_frame.copy(), detections, violations)
             _, buffer = cv2.imencode('.jpg', annotated)
             annotated_base64 = base64.b64encode(buffer).decode('utf-8')

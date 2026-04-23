@@ -108,6 +108,32 @@ export default function Dashboard() {
     };
   }, []);
 
+  const downloadCSV = () => {
+    if (!stats) return;
+    const rows: string[][] = [["Date", "Person Frames", "Violations"]];
+    Object.entries(stats.daily_trends || {}).forEach(([day, data]: [string, any]) => {
+      rows.push([day, String(data.person_frames ?? 0), String(data.violations ?? 0)]);
+    });
+    const csv = rows.map(r => r.join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "guardianvision_violations.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const complianceScore = (() => {
+    if (!stats) return "—";
+    const totalPersonFrames = Object.values(stats.daily_trends || {}).reduce(
+      (sum: number, d: any) => sum + (d.person_frames ?? 0), 0
+    );
+    if (totalPersonFrames === 0) return "N/A";
+    const rate = (stats.total_violations ?? 0) / totalPersonFrames;
+    return `${Math.max(0, Math.min(100, Math.round((1 - rate) * 100)))}%`;
+  })();
+
   // Fetch Analytics
   const fetchAnalytics = async () => {
     try {
@@ -401,7 +427,7 @@ export default function Dashboard() {
               <StatsCard label="Total Violations" value={stats?.total_violations || "0"} color="text-rose-400" />
               <StatsCard label="Hardhat Violations" value={stats?.violations_by_type?.Hardhat || "0"} color="text-amber-400" />
               <StatsCard label="Vest Violations" value={stats?.violations_by_type?.["Safety Vest"] || "0"} color="text-blue-400" />
-              <StatsCard label="Compliance Score" value="84%" color="text-emerald-400" />
+              <StatsCard label="Compliance Score" value={complianceScore} color="text-emerald-400" />
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -412,7 +438,7 @@ export default function Dashboard() {
                     <ImageIcon className="text-blue-400" />
                     <h2 className="text-xl font-bold uppercase italic tracking-tight">Evidence Gallery</h2>
                   </div>
-                  <button className="flex items-center gap-2 text-xs font-bold text-slate-400 hover:text-white transition-colors">
+                  <button onClick={downloadCSV} className="flex items-center gap-2 text-xs font-bold text-slate-400 hover:text-white transition-colors">
                     <Download size={14} /> EXPORT ALL (CSV)
                   </button>
                 </div>

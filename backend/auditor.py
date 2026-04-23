@@ -48,7 +48,7 @@ class PPEAuditor:
         critical_events = []
         compliance_warnings = []
         
-        current_time = time.timestamp() if hasattr(time, 'timestamp') else time.time()
+        current_time = time.time()
         cooldown_active = (current_time - self.last_alert_time) < self.cooldown_seconds
         
         # Track active IDs for cleanup
@@ -86,7 +86,7 @@ class PPEAuditor:
             if pers_v:
                 active_violations.append({"person_id": p_id, "bbox": p_box, "violations": pers_v})
                 if not cooldown_active and any(v not in self.snapped_violations[p_id] for v in pers_v):
-                    self._save_snapshot(frame, person, pers_v, "VIOLATION")
+                    self._save_snapshot(frame, person, pers_v, p_id)
                     for v in pers_v: self.snapped_violations[p_id].add(v)
 
         # 2. Proactive Asset Audit (Equipment presence)
@@ -123,23 +123,23 @@ class PPEAuditor:
         # Return 3 values as expected by main.py
         return active_violations, alert_triggered, critical_events
 
-    def _save_snapshot(self, frame: np.ndarray, obj: Dict, labels: List[str], prefix="EVENT"):
-        """Save a JPEG evidence snapshot of the violation or event."""
+    def _save_snapshot(self, frame: np.ndarray, obj: Dict, labels: List[str], person_id):
+        """Save a JPEG evidence snapshot of the violation."""
         if frame is None: return
         import cv2
         from datetime import datetime
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        # Draw on the snapshot for evidence
+        labels_str = "_".join(l.replace(" ", "").lower() for l in labels)
+
         evidence_frame = frame.copy()
         x1, y1, x2, y2 = map(int, obj['bbox'])
         cv2.rectangle(evidence_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-        cv2.putText(evidence_frame, f"{prefix}: {', '.join(labels)}", 
+        cv2.putText(evidence_frame, f"VIOLATION: {', '.join(labels)}",
                     (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-        filename = f"violations/{prefix}_{ts}.jpg"
+        filename = f"violations/violation_{person_id}_{labels_str}_{ts}.jpg"
         cv2.imwrite(filename, evidence_frame)
-        print(f"📸 Captured {prefix} evidence: {filename}")
+        print(f"📸 Captured evidence: {filename}")
 
     def _box_is_inside(self, inner, outer) -> bool:
         """Check if center of inner box is within outer box."""
