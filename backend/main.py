@@ -176,6 +176,10 @@ async def websocket_endpoint(websocket: WebSocket):
             msg = await websocket.receive()
             frame_count += 1
             
+            if msg["type"] == "websocket.disconnect":
+                print("🔌 Client disconnected (graceful)")
+                break
+                
             if "text" in msg:
                 data = msg["text"]
                 # Decode base64 image

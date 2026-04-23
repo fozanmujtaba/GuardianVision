@@ -95,6 +95,10 @@ export default function Dashboard() {
           lastFpsTimeRef.current = now;
         }
         return;
+      } else {
+        // Reset ref even on non-binary messages (errors/etc) to prevent deadlock
+        console.warn("📥 Received non-binary message from backend:", event.data);
+        pendingFrameRef.current = false;
       }
     };
 
@@ -187,10 +191,21 @@ export default function Dashboard() {
 
           pendingFrameRef.current = true; // Mark frame as pending
 
+          // Safety timeout to reset pending frame if backend doesn't respond
+          const timeoutId = setTimeout(() => {
+            if (pendingFrameRef.current) {
+              console.warn("⏱️ Frame response timeout, resetting lock...");
+              pendingFrameRef.current = false;
+            }
+          }, 2000);
+
           // Send as binary blob (more efficient)
           canvas.toBlob((blob) => {
             if (blob && ws.current?.readyState === WebSocket.OPEN) {
               ws.current.send(blob);
+            } else {
+              pendingFrameRef.current = false;
+              clearTimeout(timeoutId);
             }
           }, "image/jpeg", 0.4);
 
