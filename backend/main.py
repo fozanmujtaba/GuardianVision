@@ -21,9 +21,9 @@ from camera import CameraStream, FrameSimulator
 from analytics import AnalyticsManager
 from response_manager import response_manager
 
-# Configuration (Defaults)
-DEFAULT_MODEL_PATH = "../models/ppe_model.pt"
-FALLBACK_MODEL = "yolo11n.pt"
+# Configuration (Defaults) — prefer 24-class model if available
+DEFAULT_MODEL_PATH = "../models/guardian_vision_v1.pt"
+FALLBACK_MODEL = "../models/ppe_model.pt"
 
 # Global state
 model = None
