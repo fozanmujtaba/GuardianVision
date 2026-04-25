@@ -29,12 +29,41 @@ def train(epochs: int = 50):
 
     device = "mps" if torch.backends.mps.is_available() else "cpu"
 
-    # Resume from checkpoint if one exists
+    # Load checkpoint weights (without resume=True so new hyperparams take effect)
     if os.path.exists(LAST_CKPT):
-        print(f"🔄  Resuming from checkpoint: {LAST_CKPT}")
+        print(f"🔄  Continuing from checkpoint weights: {LAST_CKPT}")
         print(f"🚀  Device: {device}")
         model = YOLO(LAST_CKPT)
-        model.train(resume=True)
+        model.train(
+            data=DATA_YAML,
+            epochs=epochs,
+            imgsz=320,
+            device=device,
+            batch=32,
+            fraction=0.3,
+
+            project="runs",
+            name=OUTPUT_NAME,
+            exist_ok=True,
+            save=True,
+            plots=True,
+            verbose=True,
+
+            patience=20,
+
+            lr0=0.01,
+            lrf=0.01,
+            momentum=0.937,
+            weight_decay=0.0005,
+            warmup_epochs=3,
+
+            mosaic=1.0,
+            mixup=0.15,
+            copy_paste=0.1,
+            close_mosaic=10,
+
+            cls=0.3,
+        )
     else:
         print(f"🆕  Starting fresh training")
         print(f"🚀  Device        : {device}")
@@ -48,9 +77,10 @@ def train(epochs: int = 50):
         model.train(
             data=DATA_YAML,
             epochs=epochs,
-            imgsz=416,
+            imgsz=320,
             device=device,
             batch=32,
+            fraction=0.3,
 
             project="runs",
             name=OUTPUT_NAME,
@@ -97,4 +127,4 @@ if __name__ == "__main__":
     print("  GuardianVision — 24-Class Safety Model Training v2")
     print("=" * 60)
     print()
-    train(epochs=50)
+    train(epochs=35)
