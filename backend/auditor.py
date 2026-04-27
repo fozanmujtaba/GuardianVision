@@ -9,7 +9,7 @@ class PPEAuditor:
     Maps detection boxes to violation logic with stateful alerting.
     """
     
-    def __init__(self, cooldown_seconds: int = 10, persistence_threshold: int = 10):
+    def __init__(self, cooldown_seconds: int = 10, persistence_threshold: int = 3):
         self.cooldown_seconds = cooldown_seconds
         self.persistence_threshold = persistence_threshold
         self.last_alert_time = 0

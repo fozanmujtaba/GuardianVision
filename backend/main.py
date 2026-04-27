@@ -21,9 +21,9 @@ from camera import CameraStream, FrameSimulator
 from analytics import AnalyticsManager
 from response_manager import response_manager
 
-# Configuration (Defaults) — prefer 24-class model if available
-DEFAULT_MODEL_PATH = "../models/guardian_vision_v1.pt"
-FALLBACK_MODEL = "../models/ppe_model.pt"
+# Configuration (Defaults)
+DEFAULT_MODEL_PATH = "../models/ppe_model.pt"
+FALLBACK_MODEL = "../models/yolo11n.pt"
 
 # Global state
 model = None
@@ -55,6 +55,10 @@ async def lifespan(app: FastAPI):
         model = YOLO(FALLBACK_MODEL)
     
     model.to(device)
+    # Sync CLASS_NAMES to the loaded model's labels
+    CLASS_NAMES.clear()
+    CLASS_NAMES.update(model.names)
+    print(f"📋 Classes: {list(CLASS_NAMES.values())}")
     auditor = PPEAuditor(cooldown_seconds=10)
     analytics = AnalyticsManager()
     
@@ -211,13 +215,12 @@ async def websocket_endpoint(websocket: WebSocket):
             
             # Run inference with tracking (ByteTrack) - Faster than BoTSORT
             inf_start = time.time()
-            results = model.track(processed_frame, device=device, persist=True, verbose=False, imgsz=480, tracker="bytetrack.yaml")
+            results = model.track(processed_frame, device=device, persist=True, verbose=False, imgsz=480, tracker="bytetrack.yaml", conf=0.15)
             inf_time = (time.time() - inf_start) * 1000
-            
-            if frame_count % 30 == 0:
-                print(f"⏱️ Inference process {frame_count}: {inf_time:.2f}ms")
-            
+
             detections = process_detections(results)
+            if frame_count % 30 == 0:
+                print(f"⏱️ Frame {frame_count}: {inf_time:.2f}ms | detections={len(detections)} | classes={[d['class_name'] for d in detections]}")
             
             # Audit for violations and emergency threats
             violations, alert_triggered, critical_events = auditor.audit_frame(detections, frame=processed_frame)
