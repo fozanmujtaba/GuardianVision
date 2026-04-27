@@ -201,10 +201,6 @@ async def websocket_endpoint(websocket: WebSocket):
             else:
                 continue
 
-            # Process every 2nd frame to reduce lag (skip odd frames)
-            if frame_count % 2 != 0:
-                continue
-            
             if frame_count % 30 == 0:
                 print(f"📦 Received frame ${frame_count}")
             
@@ -246,7 +242,7 @@ async def websocket_endpoint(websocket: WebSocket):
             annotated = annotate_frame(processed_frame.copy(), detections, violations)
             
             # Binary Response: Reduce Base64 overhead
-            _, buffer = cv2.imencode('.jpg', annotated)
+            _, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 60])
             
             response_metadata = {
                 "detections": detections,

@@ -102,6 +102,7 @@ export default function Dashboard() {
   const lastFpsTimeRef = useRef(Date.now());
   const pendingFrameRef = useRef(false);
   const sendTimeRef = useRef(0);
+  const sendIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sessionStartRef = useRef(Date.now());
   const complianceWindowRef = useRef<boolean[]>([]);
   const sessionViolationsRef = useRef(0);
@@ -274,29 +275,36 @@ export default function Dashboard() {
       setIsStreaming(true);
       if (videoRef.current) { videoRef.current.srcObject = ms; await videoRef.current.play(); }
 
+      let inFlight = 0;
       const sendFrame = () => {
         if (!isStreamingRef.current) return;
-        if (!videoRef.current || !canvasRef.current || !ws.current) { requestAnimationFrame(sendFrame); return; }
-        if (ws.current.readyState !== WebSocket.OPEN) { requestAnimationFrame(sendFrame); return; }
-        if (pendingFrameRef.current) { requestAnimationFrame(sendFrame); return; }
+        if (!videoRef.current || !canvasRef.current || !ws.current) return;
+        if (ws.current.readyState !== WebSocket.OPEN) return;
+        if (inFlight >= 2) return; // drop frame if backend is backed up
 
         const video = videoRef.current;
         const canvas = canvasRef.current;
         const ctx = canvas.getContext("2d");
         if (ctx && video.readyState === video.HAVE_ENOUGH_DATA) {
-          canvas.width = 480; canvas.height = 480;
-          ctx.drawImage(video, 0, 0, 480, 480);
-          pendingFrameRef.current = true;
+          canvas.width = 320; canvas.height = 320;
+          ctx.drawImage(video, 0, 0, 320, 320);
+          inFlight++;
           sendTimeRef.current = performance.now();
-          const tid = setTimeout(() => { pendingFrameRef.current = false; }, 2000);
           canvas.toBlob((blob) => {
             if (blob && ws.current?.readyState === WebSocket.OPEN) ws.current.send(blob);
-            else { pendingFrameRef.current = false; clearTimeout(tid); }
-          }, "image/jpeg", 0.4);
+            else inFlight--;
+          }, "image/jpeg", 0.5);
         }
-        setTimeout(() => { if (isStreamingRef.current) requestAnimationFrame(sendFrame); }, 66);
       };
-      setTimeout(sendFrame, 300);
+
+      // patch onmessage to decrement inFlight
+      const origOnMessage = ws.current.onmessage;
+      ws.current.onmessage = (event) => {
+        inFlight = Math.max(0, inFlight - 1);
+        origOnMessage?.call(ws.current, event);
+      };
+
+      sendIntervalRef.current = setInterval(sendFrame, 50); // 20 fps cap
     } catch {
       alert("Could not access webcam. Please check permissions.");
       isStreamingRef.current = false;
@@ -307,6 +315,7 @@ export default function Dashboard() {
   const stopWebcam = useCallback(() => {
     isStreamingRef.current = false;
     setIsStreaming(false);
+    if (sendIntervalRef.current) { clearInterval(sendIntervalRef.current); sendIntervalRef.current = null; }
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
