@@ -21,7 +21,7 @@ Industrial workplaces — construction sites, manufacturing plants, warehouses �
 Regulatory bodies increasingly mandate verifiable audit trails for PPE compliance. Traditional paper-based inspection logs are easy to falsify and difficult to analyze at scale.
 
 **GuardianVision** is an end-to-end, AI-driven safety monitoring system that:
-- Detects PPE violations in real-time using a 24-class deep learning model
+- Detects PPE violations in real-time when a trained safety model is supplied
 - Identifies critical emergencies (fire, smoke, man-down) and triggers immediate alerts
 - Generates tamper-evident photographic evidence for every confirmed violation
 - Provides an interactive compliance dashboard with live analytics
@@ -38,6 +38,10 @@ Regulatory bodies increasingly mandate verifiable audit trails for PPE complianc
 | O4 | Automated Evidence & Dashboard | Fully functional | ✅ Complete |
 
 ---
+
+### Reproducibility Note
+
+The repository does not commit large `.pt` weight files. The backend now looks for `models/guardian_vision_v1.pt`, then `models/ppe_model.pt`, and finally falls back to Ultralytics `yolo11n.pt` so the application can start from a fresh clone. The fallback is a COCO model and should be treated as a runnable demo mode, not as evidence of PPE-model accuracy. The reported `mAP@0.5 = 0.567` is an experimental result from local training artifacts and is not reproducible unless the corresponding dataset and trained weights are supplied or regenerated with the scripts in `scripts/`.
 
 ## 3. System Architecture
 
@@ -336,13 +340,13 @@ The Next.js 15 dashboard provides a real-time operator interface:
 
 ## 12. Conclusion
 
-GuardianVision delivers a fully functional, real-time industrial safety monitoring system built on state-of-the-art deep learning. The system meets all system performance objectives (latency, FPS, evidence capture, dashboard) and demonstrates meaningful detection of PPE violations and critical events in live use.
+GuardianVision delivers a functional, real-time industrial safety monitoring prototype built on modern deep learning tooling. The system meets the software performance objectives (latency, FPS, evidence capture, dashboard) when a suitable safety model is available, and the application remains runnable from a fresh clone through a COCO fallback model.
 
-The 24-class YOLO11s model achieves mAP@0.5 = **0.567** — below the 85% proposal target, but attributable to well-understood dataset constraints (class imbalance, label noise from multi-source merging) rather than architectural limitations. The stateful persistence layer compensates operationally by filtering false positives, delivering reliable alert behavior in practice.
+A local 24-class YOLO11s training run recorded mAP@0.5 = **0.567**, below the 85% proposal target. Because the trained weights and full merged dataset are not committed, this number should be treated as an experiment record rather than a fresh-clone reproducibility claim. The stateful persistence layer still reduces alert noise by requiring repeated PPE evidence before triggering.
 
 **What was built:**
 - End-to-end real-time pipeline from browser camera to annotated feed in <100ms
-- 24-class custom-trained YOLO11s model on a merged 5-source mega-dataset
+- Training pipeline for a 24-class YOLO11s model on a merged 5-source mega-dataset
 - ByteTrack-powered per-person violation history with evidence capture
 - Full Next.js dashboard with live compliance gauge, analytics, and evidence gallery
 

@@ -167,15 +167,15 @@ backend/violations/
 backend/test_camera.py
 
 # Datasets and Training Runs (Large Files)
-scripts/datasets/
+scripts/datasets/**
+!scripts/datasets/**/
+!scripts/datasets/**/*.yaml
 scripts/mega_dataset/
 scripts/runs/
 backend/datasets/
 backend/runs/
 runs/
-*.yaml
-!backend/requirements.txt
-!frontend/package.json
+scripts/mega_data.yaml
 
 # Local scripts
 start_all.sh

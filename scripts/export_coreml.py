@@ -5,8 +5,14 @@ Exports the trained PPE model to CoreML (FP16) for Mac Neural Engine acceleratio
 
 from ultralytics import YOLO
 import os
+from pathlib import Path
 
-def export_to_coreml(model_path: str = "../models/ppe_model.pt"):
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+DEFAULT_MODEL = PROJECT_ROOT / "models" / "guardian_vision_v1.pt"
+
+
+def export_to_coreml(model_path: str = str(DEFAULT_MODEL)):
     """
     Export YOLO model to CoreML format.
     """

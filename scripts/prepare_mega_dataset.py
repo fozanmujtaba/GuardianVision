@@ -1,13 +1,17 @@
-import os
 import yaml
 import shutil
 from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+MEGA_DATASET_DIR = SCRIPT_DIR / "mega_dataset"
+DATASETS_DIR = SCRIPT_DIR / "datasets" / "ppe"
+MEGA_YAML = SCRIPT_DIR / "mega_data.yaml"
 
 def setup_dataset_structure():
     """
     Creates the directory structure for the merged GuardianVision Mega-Dataset.
     """
-    base_path = Path("mega_dataset")
+    base_path = MEGA_DATASET_DIR
     subdirs = ["images/train", "images/val", "labels/train", "labels/val"]
     
     for subdir in subdirs:
@@ -20,8 +24,8 @@ def merge_datasets():
     setup_dataset_structure()
     generate_mega_yaml()
     
-    base_dir = Path("/Users/mac/projects/GuardianVision/scripts/datasets/ppe")
-    target_dir = Path("mega_dataset")
+    base_dir = DATASETS_DIR
+    target_dir = MEGA_DATASET_DIR
     
     # Define source paths and their specific remapping
     # Map: {original_id: final_id}
@@ -101,7 +105,7 @@ def merge_datasets():
 def generate_mega_yaml():
     """Generates the YOLO yaml file."""
     data = {
-        'path': os.path.abspath("mega_dataset"),
+        'path': str(MEGA_DATASET_DIR),
         'train': 'images/train',
         'val': 'images/val',
         'nc': 24,
@@ -114,8 +118,8 @@ def generate_mega_yaml():
             "Call Point Sign", "Fire Door Sign", "Fire Extinguisher Sign"
         ]
     }
-    with open("mega_data.yaml", "w") as f:
-        yaml.dump(data, f, default_flow_style=False)
+    with MEGA_YAML.open("w") as f:
+        yaml.safe_dump(data, f, default_flow_style=False)
 
 if __name__ == "__main__":
     merge_datasets()

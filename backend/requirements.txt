@@ -16,3 +16,4 @@ albumentations>=2.0.0
 
 # Utilities
 python-multipart>=0.0.18
+PyYAML>=6.0.2

@@ -1,5 +1,6 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element -- live blob frames and evidence URLs should not be optimized */
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import {
   ShieldAlert, CheckCircle, Activity, Camera, AlertTriangle,
@@ -22,6 +23,62 @@ const CLASS_COLOR: Record<string, string> = {
   "Safety Cone":      "bg-amber-500/15 text-amber-400 border-amber-500/30",
   "vehicle":          "bg-blue-500/15 text-blue-400 border-blue-500/30",
   "machinery":        "bg-purple-500/15 text-purple-400 border-purple-500/30",
+};
+
+type Detection = {
+  id?: number | string;
+  bbox: number[];
+  conf: number;
+  class: number;
+  class_name: string;
+};
+
+type Violation = {
+  person_id: number | string;
+  bbox: number[];
+  violations: string[];
+};
+
+type CriticalEvent = {
+  type: string;
+  location: string;
+  bbox?: number[];
+};
+
+type ResponseActions = {
+  voice_announcement?: string | false;
+  emergency_mode?: boolean;
+  notifications_sent?: boolean;
+};
+
+type StreamMetadata = {
+  detections?: Detection[];
+  violations?: Violation[];
+  critical_events?: CriticalEvent[];
+  alert?: boolean;
+  response_actions?: ResponseActions | null;
+  device?: string;
+};
+
+type DailyTrend = {
+  person_frames?: number;
+  violations?: number;
+};
+
+type AnalyticsStats = {
+  total_violations?: number;
+  violations_by_type?: Record<string, number>;
+  daily_trends?: Record<string, DailyTrend>;
+};
+
+type AlertItem = {
+  id: number;
+  time: string;
+  violations: Violation[];
+};
+
+type ViolationsResponse = {
+  violations?: string[];
 };
 
 function formatUptime(s: number) {
@@ -77,8 +134,8 @@ export default function Dashboard() {
   /* ── detection state ── */
   const [personCount, setPersonCount] = useState(0);
   const [detectionTags, setDetectionTags] = useState<{ name: string; count: number }[]>([]);
-  const [alerts, setAlerts] = useState<any[]>([]);
-  const [criticalEvents, setCriticalEvents] = useState<any[]>([]);
+  const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [criticalEvents, setCriticalEvents] = useState<CriticalEvent[]>([]);
   const [isEmergencyMode, setIsEmergencyMode] = useState(false);
   const [sessionViolations, setSessionViolations] = useState(0);
   const [liveCompliance, setLiveCompliance] = useState(100);
@@ -89,7 +146,7 @@ export default function Dashboard() {
 
   /* ── analytics view ── */
   const [showAnalytics, setShowAnalytics] = useState(false);
-  const [stats, setStats] = useState<any>(null);
+  const [stats, setStats] = useState<AnalyticsStats | null>(null);
   const [violationFiles, setViolationFiles] = useState<string[]>([]);
 
   /* ── refs ── */
@@ -101,6 +158,7 @@ export default function Dashboard() {
   const frameCountRef = useRef(0);
   const lastFpsTimeRef = useRef(Date.now());
   const pendingFrameRef = useRef(false);
+  const inFlightRef = useRef(0);
   const sendTimeRef = useRef(0);
   const sendIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sessionStartRef = useRef(Date.now());
@@ -150,6 +208,7 @@ export default function Dashboard() {
     ws.current.onmessage = (event) => {
       if (!(event.data instanceof ArrayBuffer)) {
         pendingFrameRef.current = false;
+        inFlightRef.current = Math.max(0, inFlightRef.current - 1);
         return;
       }
 
@@ -157,7 +216,7 @@ export default function Dashboard() {
       const buf = event.data as ArrayBuffer;
       const view = new DataView(buf);
       const jsonLen = view.getUint32(0);
-      const meta = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, jsonLen)));
+      const meta = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, jsonLen))) as StreamMetadata;
       const imgBytes = new Uint8Array(buf, 4 + jsonLen);
 
       /* update annotated frame */
@@ -166,6 +225,7 @@ export default function Dashboard() {
       setStream((prev) => { if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev); return url; });
 
       pendingFrameRef.current = false;
+      inFlightRef.current = Math.max(0, inFlightRef.current - 1);
       setLatency(Math.round(performance.now() - sendTimeRef.current));
 
       /* device */
@@ -177,25 +237,26 @@ export default function Dashboard() {
       setCriticalEvents(meta.critical_events?.length ? meta.critical_events : []);
 
       /* violations */
-      if (meta.alert && meta.violations?.length) {
-        sessionViolationsRef.current += meta.violations.length;
+      const frameViolations = meta.violations ?? [];
+      if (meta.alert && frameViolations.length) {
+        sessionViolationsRef.current += frameViolations.length;
         setSessionViolations(sessionViolationsRef.current);
         playBeep();
         setAlerts((prev) => [
-          { id: Date.now(), time: new Date().toLocaleTimeString(), violations: meta.violations },
+          { id: Date.now(), time: new Date().toLocaleTimeString(), violations: frameViolations },
           ...prev,
         ].slice(0, 8));
       }
 
       /* live detections — person count + tag strip */
-      const dets: any[] = meta.detections ?? [];
-      setPersonCount(dets.filter((d) => d.class === 5).length);
+      const dets: Detection[] = meta.detections ?? [];
+      setPersonCount(dets.filter((d) => d.class_name.toLowerCase() === "person").length);
       const tagMap: Record<string, number> = {};
       for (const d of dets) tagMap[d.class_name] = (tagMap[d.class_name] ?? 0) + 1;
       setDetectionTags(Object.entries(tagMap).map(([name, count]) => ({ name, count })));
 
       /* rolling 60-frame compliance window */
-      const hasViolation = (meta.violations?.length ?? 0) > 0;
+      const hasViolation = frameViolations.length > 0;
       complianceWindowRef.current = [...complianceWindowRef.current.slice(-59), hasViolation];
       const clean = complianceWindowRef.current.filter((v) => !v).length;
       setLiveCompliance(Math.round((clean / complianceWindowRef.current.length) * 100));
@@ -221,8 +282,10 @@ export default function Dashboard() {
         fetch("http://127.0.0.1:8000/api/analytics"),
         fetch("http://127.0.0.1:8000/api/violations"),
       ]);
-      setStats(await aRes.json());
-      setViolationFiles((await vRes.json()).violations ?? []);
+      const analyticsData = (await aRes.json()) as AnalyticsStats;
+      const violationsData = (await vRes.json()) as ViolationsResponse;
+      setStats(analyticsData);
+      setViolationFiles(violationsData.violations ?? []);
     } catch { /* backend may be starting up */ }
   }, []);
 
@@ -237,8 +300,8 @@ export default function Dashboard() {
   const historicalCompliance = (() => {
     if (!stats) return "—";
     const frames = Object.values(stats.daily_trends ?? {}).reduce(
-      (s: number, d: any) => s + (d.person_frames ?? 0), 0,
-    ) as number;
+      (s, d) => s + (d.person_frames ?? 0), 0,
+    );
     if (frames === 0) return "N/A";
     const rate = (stats.total_violations ?? 0) / frames;
     return `${Math.max(0, Math.min(100, Math.round((1 - rate) * 100)))}%`;
@@ -255,7 +318,7 @@ export default function Dashboard() {
   const downloadCSV = () => {
     if (!stats) return;
     const rows = [["Date", "Person Frames", "Violations"],
-      ...Object.entries(stats.daily_trends ?? {}).map(([day, d]: [string, any]) =>
+      ...Object.entries(stats.daily_trends ?? {}).map(([day, d]) =>
         [day, String(d.person_frames ?? 0), String(d.violations ?? 0)])];
     const blob = new Blob([rows.map((r) => r.join(",")).join("\n")], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -275,12 +338,11 @@ export default function Dashboard() {
       setIsStreaming(true);
       if (videoRef.current) { videoRef.current.srcObject = ms; await videoRef.current.play(); }
 
-      let inFlight = 0;
       const sendFrame = () => {
         if (!isStreamingRef.current) return;
         if (!videoRef.current || !canvasRef.current || !ws.current) return;
         if (ws.current.readyState !== WebSocket.OPEN) return;
-        if (inFlight >= 2) return; // drop frame if backend is backed up
+        if (inFlightRef.current >= 2) return; // drop frame if backend is backed up
 
         const video = videoRef.current;
         const canvas = canvasRef.current;
@@ -288,20 +350,13 @@ export default function Dashboard() {
         if (ctx && video.readyState === video.HAVE_ENOUGH_DATA) {
           canvas.width = 320; canvas.height = 320;
           ctx.drawImage(video, 0, 0, 320, 320);
-          inFlight++;
+          inFlightRef.current++;
           sendTimeRef.current = performance.now();
           canvas.toBlob((blob) => {
             if (blob && ws.current?.readyState === WebSocket.OPEN) ws.current.send(blob);
-            else inFlight--;
+            else inFlightRef.current = Math.max(0, inFlightRef.current - 1);
           }, "image/jpeg", 0.5);
         }
-      };
-
-      // patch onmessage to decrement inFlight
-      const origOnMessage = ws.current.onmessage;
-      ws.current.onmessage = (event) => {
-        inFlight = Math.max(0, inFlight - 1);
-        origOnMessage?.call(ws.current, event);
       };
 
       sendIntervalRef.current = setInterval(sendFrame, 50); // 20 fps cap
@@ -321,6 +376,7 @@ export default function Dashboard() {
     if (videoRef.current) videoRef.current.srcObject = null;
     setStream(null);
     pendingFrameRef.current = false;
+    inFlightRef.current = 0;
   }, []);
 
   /* ── render ── */
@@ -681,8 +737,8 @@ export default function Dashboard() {
                   <p className="text-xs text-slate-600 text-center py-6">No violation data yet</p>
                 ) : (
                   <div className="space-y-3">
-                    {Object.entries(stats?.violations_by_type ?? {}).map(([type, count]: [string, any]) => {
-                      const max = Math.max(...Object.values(stats.violations_by_type).map(Number));
+                    {Object.entries(stats?.violations_by_type ?? {}).map(([type, count]) => {
+                      const max = Math.max(...Object.values(stats?.violations_by_type ?? {}).map(Number));
                       const pct = max > 0 ? Math.round((count / max) * 100) : 0;
                       return (
                         <div key={type}>
@@ -713,7 +769,7 @@ export default function Dashboard() {
                   <p className="text-xs text-slate-600 text-center py-6">No session data yet</p>
                 ) : (
                   <div className="space-y-2.5 max-h-52 overflow-y-auto">
-                    {Object.entries(stats?.daily_trends ?? {}).reverse().map(([day, data]: [string, any]) => (
+                    {Object.entries(stats?.daily_trends ?? {}).reverse().map(([day, data]) => (
                       <div key={day}
                         className="flex justify-between items-center p-3 rounded-xl bg-slate-800/60 border border-slate-700/50">
                         <div>

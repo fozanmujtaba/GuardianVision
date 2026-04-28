@@ -1,29 +1,33 @@
-# Construction PPE Dataset Configuration
-# This file is used by Ultralytics YOLO for training on PPE detection
+# GuardianVision 24-class safety schema reference.
+# The training script generates scripts/mega_data.yaml with the same class order.
 
-# Dataset paths (will be downloaded automatically if using Ultralytics Hub)
-path: ../datasets/ppe  # dataset root dir
-train: images/train    # train images relative to 'path'
-val: images/val        # val images relative to 'path'
+path: ../scripts/mega_dataset
+train: images/train
+val: images/val
 
-# Classes
+nc: 24
 names:
-  0: person
-  1: helmet
-  2: vest
-  3: gloves
-  4: boots
-  5: goggles
-
-# Number of classes
-nc: 6
-
-# Dataset info
-# This dataset is designed for industrial PPE compliance detection.
-# It contains annotations for workers and their safety equipment.
-#
-# To download:
-# yolo train data=ppe.yaml model=yolo11n.pt epochs=1 (will auto-download)
-#
-# Or manually download from:
-# https://universe.roboflow.com/ppe-detection-datasets
+  0: Hardhat
+  1: Mask
+  2: NO-Hardhat
+  3: NO-Mask
+  4: NO-Safety Vest
+  5: Person
+  6: Safety Cone
+  7: Safety Vest
+  8: machinery
+  9: vehicle
+  10: Fire
+  11: Smoke
+  12: Emergency Exit Sign
+  13: Fire Extinguisher
+  14: Fall Detected
+  15: Sitting
+  16: Fire Blanket
+  17: Manual Call Point
+  18: Smoke Detector
+  19: Wall Hydrant Sign
+  20: Fire Extinguisher Sign Old
+  21: Call Point Sign
+  22: Fire Door Sign
+  23: Fire Extinguisher Sign

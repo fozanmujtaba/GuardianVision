@@ -44,7 +44,7 @@ To achieve seamless real-time performance on standard hardware, several "Product
 In testing, the system demonstrated:
 - **Inference Speed**: ~25ms per frame on Apple M2 (MPS).
 - **Latency**: Sub-80ms glass-to-glass (camera capture to UI update).
-- **Compliance Accuracy**: High precision in detecting missing equipment due to the customized 24-class safety dataset.
+- **Compliance Accuracy**: Prototype-level PPE detection with stateful alert filtering. The repository does not include trained `.pt` weights; reproducible accuracy depends on training or supplying the safety model described in the training scripts.
 
 ## 8. Conclusion & Future Scope
 GuardianVision successfully demonstrates how AI can be deployed to create safer working environments. 

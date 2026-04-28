@@ -1,42 +1,67 @@
-# GuardianVision 🛡️
+# GuardianVision
 
-**Professional-Grade Automated Visual Compliance Auditor**
+Real-time visual safety and PPE compliance monitor built with FastAPI, Ultralytics YOLO, OpenCV, and a Next.js dashboard.
 
-GuardianVision monitors real-time video feeds in industrial environments to detect PPE (Personal Protective Equipment) violations (e.g., missing helmets/vests) and unauthorized entry. Built with YOLO11 and FastAPI for the 2026 standard.
+## What Works
 
-## 🚀 Key Features
+- FastAPI backend with `/ws`, `/ws/camera`, `/api/analytics`, `/api/violations`, and `/health`.
+- Binary WebSocket stream: `[4-byte JSON length][JSON metadata][JPEG frame]`.
+- YOLO tracking via ByteTrack for live detections.
+- Stateful PPE alerting with a 10-frame persistence threshold and 10-second PPE alert cooldown.
+- Evidence snapshots saved under `backend/violations/`.
+- Next.js dashboard for live video, alerts, analytics, evidence gallery, and speech synthesis.
 
-- **Object Detection**: YOLO11 (Ultralytics) optimized for Apple Silicon (MPS/CoreML).
-- **Spatial Logic Engine**: Maps person bounding boxes to PPE objects to flag violations.
-- **Multi-Object Tracking**: Uses BoTSORT for temporal consistency.
-- **Stateful Alerts**: 10s cooldown mechanism and persistence thresholds (10-frame rule).
-- **Automated Auditing**: Captures high-res evidence snapshots of persistent violations.
-- **Dashboard**: Next.js 15 App Router with real-time WebSocket streaming and analytics.
-- **Edge Acceleration**: Explicit MPS acceleration for M2 Pro/Max Neural Engines.
+## Model Files
 
-## 🛠️ Tech Stack
+Large `.pt` weights are intentionally not committed. At startup the backend tries, in order:
 
-- **Backend**: Python 3.12, FastAPI, Ultralytics YOLO11, OpenCV, Albumentations.
-- **Frontend**: Next.js 15 (Typed), Tailwind CSS, Lucide React, WebSockets.
-- **Deployment**: CoreML optimization for macOS Edge processing.
+1. `MODEL_PATH` if provided.
+2. `models/guardian_vision_v1.pt` from `scripts/train_safety_model.py`.
+3. `models/ppe_model.pt` from `scripts/train_ppe.py`.
+4. Ultralytics `yolo11n.pt` as a COCO fallback so a fresh clone can boot.
 
-## 📦 Installation
+The fallback model detects COCO classes, not PPE. For actual PPE compliance alerts, train or provide one of the safety models above.
 
-### Backend
-1. `cd backend`
-2. `python -m venv venv && source venv/bin/activate`
-3. `pip install -r requirements.txt`
-4. `python main.py`
+## Backend
 
-### Frontend
-1. `cd frontend`
-2. `npm install`
-3. `npm run dev`
+```bash
+cd backend
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+python main.py
+```
 
-## 📊 Performance
-- **Inference Speed**: ~20-30 FPS on Apple M2 Pro (MPS).
-- **Latency**: <10ms encode-to-stream latency.
-- **Accuracy**: Optimized for industrial PPE Kit Detection datasets.
+Optional:
 
----
-*Created by [fozanmujtaba](https://github.com/fozanmujtaba)*
+```bash
+python main.py --model ..\models\guardian_vision_v1.pt
+set PERSISTENCE_THRESHOLD=10
+set FORCE_CPU=true
+```
+
+## Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Production checks:
+
+```bash
+npm run lint
+npm run build
+npm audit --audit-level=moderate
+```
+
+## Training
+
+The portable training scripts live in `scripts/`:
+
+- `prepare_mega_dataset.py` generates `scripts/mega_dataset/` and `scripts/mega_data.yaml`.
+- `train_safety_model.py` trains the 24-class safety model and copies the best checkpoint to `models/guardian_vision_v1.pt`.
+- `train_ppe.py` trains the 10-class PPE model and copies the best checkpoint to `models/ppe_model.pt`.
+
+Datasets, run outputs, and model weights are ignored by Git. Keep only source code, dataset configs, reports, and reproducibility instructions in the repository.

@@ -7,6 +7,13 @@ from ultralytics import YOLO
 import torch
 import os
 import shutil
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+RUNS_DIR = SCRIPT_DIR / "runs"
+DATA_YAML = SCRIPT_DIR / "datasets" / "ppe" / "ppe_kaggle.yaml"
+FINAL_PATH = PROJECT_ROOT / "models" / "ppe_model.pt"
 
 def train_ppe_model(epochs: int = 100):
     """
@@ -16,9 +23,9 @@ def train_ppe_model(epochs: int = 100):
     print(f"🚀 Training on device: {device}")
     
     # Path to the manually created data.yaml
-    data_yaml = "/Users/mac/projects/GuardianVision/scripts/datasets/ppe/ppe_kaggle.yaml"
+    data_yaml = DATA_YAML
     
-    if not os.path.exists(data_yaml):
+    if not data_yaml.exists():
         print(f"❌ Error: {data_yaml} not found!")
         return
 
@@ -31,11 +38,11 @@ def train_ppe_model(epochs: int = 100):
     print()
     
     results = model.train(
-        data=data_yaml,
+        data=str(data_yaml),
         epochs=epochs,
         imgsz=640,
         device=device,
-        project="runs",
+        project=str(RUNS_DIR),
         name="ppe_kaggle_prod",
         exist_ok=True,
         patience=20,
@@ -53,18 +60,20 @@ def train_ppe_model(epochs: int = 100):
     )
     
     # Copy best weights to models directory
-    best_weights = "runs/ppe_kaggle_prod/weights/best.pt"
-    final_path = "../models/ppe_model.pt"
+    best_weights = RUNS_DIR / "ppe_kaggle_prod" / "weights" / "best.pt"
+    final_path = FINAL_PATH
     
-    if os.path.exists(best_weights):
+    if best_weights.exists():
+        final_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(best_weights, final_path)
         print(f"\n✅ Production model saved to: {final_path}")
         print("🔄 Restart the backend to use the new model!")
     else:
         # Check alternate paths
-        for root, dirs, files in os.walk("runs/ppe_kaggle_prod"):
+        for root, dirs, files in os.walk(RUNS_DIR / "ppe_kaggle_prod"):
             if "best.pt" in files:
-                src = os.path.join(root, "best.pt")
+                src = Path(root) / "best.pt"
+                final_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(src, final_path)
                 print(f"✅ Found and copied from: {src}")
                 break

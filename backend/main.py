@@ -11,19 +11,28 @@ import asyncio
 import argparse
 import os
 import numpy as np
+from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from ultralytics import YOLO
-from auditor import PPEAuditor
+from auditor import DEFAULT_SAFETY_CLASSES, PPEAuditor
 from camera import CameraStream, FrameSimulator
 from analytics import AnalyticsManager
 from response_manager import response_manager
 
 # Configuration (Defaults)
-DEFAULT_MODEL_PATH = "../models/ppe_model.pt"
-FALLBACK_MODEL = "../models/yolo11n.pt"
+BASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BASE_DIR.parent
+MODELS_DIR = PROJECT_ROOT / "models"
+VIOLATIONS_DIR = BASE_DIR / "violations"
+ANALYTICS_PATH = BASE_DIR / "analytics_stats.json"
+
+DEFAULT_MODEL_PATH = MODELS_DIR / "guardian_vision_v1.pt"
+LEGACY_MODEL_PATH = MODELS_DIR / "ppe_model.pt"
+FALLBACK_MODEL = "yolo11n.pt"
+VIOLATIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Global state
 model = None
@@ -31,12 +40,41 @@ device = None
 auditor = None
 camera_task = None
 analytics = None
+loaded_model_ref = None
 SIMULATION_MODE = os.environ.get("SIMULATION_MODE", "false").lower() == "true"
+
+
+def _normalize_model_ref(model_ref: str) -> str:
+    """Resolve local model paths relative to the project when possible."""
+    raw_path = Path(model_ref).expanduser()
+    if raw_path.is_absolute():
+        return str(raw_path)
+
+    for base in (Path.cwd(), PROJECT_ROOT, BASE_DIR):
+        candidate = (base / raw_path).resolve()
+        if candidate.exists():
+            return str(candidate)
+
+    return model_ref
+
+
+def _coerce_model_names(names):
+    if isinstance(names, dict):
+        return {int(k): str(v) for k, v in names.items()}
+    return {i: str(v) for i, v in enumerate(names)}
+
+
+def _detection_name(det):
+    return str(det.get("class_name", "")).strip().lower()
+
+
+def _is_person_detection(det):
+    return _detection_name(det) == "person"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize model on startup."""
-    global model, device, auditor, analytics
+    global model, device, auditor, analytics, loaded_model_ref
     
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     if os.environ.get("FORCE_CPU", "false").lower() == "true":
@@ -44,23 +82,33 @@ async def lifespan(app: FastAPI):
     print(f"🚀 Device: {device}")
     
     # Determine model path dynamically
-    current_model_path = os.environ.get("MODEL_PATH", DEFAULT_MODEL_PATH)
+    current_model_path = _normalize_model_ref(os.environ.get("MODEL_PATH", str(DEFAULT_MODEL_PATH)))
+    if not os.path.exists(current_model_path) and os.path.exists(LEGACY_MODEL_PATH):
+        current_model_path = str(LEGACY_MODEL_PATH)
     
     # Load custom PPE model if available, otherwise fallback
     if os.path.exists(current_model_path):
         print(f"📦 Loading custom safety model: {current_model_path}")
         model = YOLO(current_model_path)
+        loaded_model_ref = current_model_path
     else:
         print(f"⚠️ Custom model not found at {current_model_path}, using fallback: {FALLBACK_MODEL}")
         model = YOLO(FALLBACK_MODEL)
+        loaded_model_ref = FALLBACK_MODEL
     
     model.to(device)
     # Sync CLASS_NAMES to the loaded model's labels
     CLASS_NAMES.clear()
-    CLASS_NAMES.update(model.names)
+    CLASS_NAMES.update(_coerce_model_names(model.names))
     print(f"📋 Classes: {list(CLASS_NAMES.values())}")
-    auditor = PPEAuditor(cooldown_seconds=10)
-    analytics = AnalyticsManager()
+    persistence_threshold = int(os.environ.get("PERSISTENCE_THRESHOLD", "10"))
+    auditor = PPEAuditor(
+        cooldown_seconds=10,
+        persistence_threshold=persistence_threshold,
+        class_names=CLASS_NAMES,
+        snapshot_dir=VIOLATIONS_DIR,
+    )
+    analytics = AnalyticsManager(stats_file=str(ANALYTICS_PATH))
     
     # Background task to save analytics every 60 seconds
     async def save_loop():
@@ -78,7 +126,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="GuardianVision Backend", lifespan=lifespan)
 
 # Static files for violation snapshots
-app.mount("/violations", StaticFiles(directory="violations"), name="violations")
+app.mount("/violations", StaticFiles(directory=str(VIOLATIONS_DIR)), name="violations")
 
 @app.get("/")
 async def root():
@@ -105,15 +153,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Comprehensive Safety Classes (24 Classes)
-CLASS_NAMES = {
-    0: "Hardhat", 1: "Mask", 2: "NO-Hardhat", 3: "NO-Mask", 4: "NO-Safety Vest", 
-    5: "Person", 6: "Safety Cone", 7: "Safety Vest", 8: "machinery", 9: "vehicle",
-    10: "Fire", 11: "Smoke", 12: "Emergency Exit Sign", 13: "Fire Extinguisher", 
-    14: "Fall Detected", 15: "Sitting", 16: "Fire Blanket", 17: "Manual Call Point", 
-    18: "Smoke Detector", 19: "Wall Hydrant Sign", 20: "Fire Extinguisher Sign Old", 
-    21: "Call Point Sign", 22: "Fire Door Sign", 23: "Fire Extinguisher Sign"
-}
+# Safety classes are replaced at startup with the loaded model's labels.
+CLASS_NAMES = DEFAULT_SAFETY_CLASSES.copy()
 
 def preprocess_frame(frame):
     """OpenCV processing: resize to 480x480 for faster inference."""
@@ -144,12 +185,13 @@ def annotate_frame(frame, detections, violations):
         x1, y1, x2, y2 = map(int, det["bbox"])
         # Default color: Gray
         color = (150, 150, 150)
+        class_name = _detection_name(det)
         
-        if det["class"] == 5:  # Person
+        if class_name == "person":
             color = (255, 200, 0)  # Cyan for person
-        elif det["class"] in [10, 11, 14]: # Fire, Smoke, Fall
+        elif class_name in {"fire", "smoke", "fall detected", "fall"}:
             color = (0, 0, 255) # Red for critical
-        elif det["class"] in [0, 7]: # Hardhat, Safety Vest
+        elif class_name in {"hardhat", "helmet", "safety vest", "vest"}:
             color = (0, 255, 255) # Yellow/Gold
         
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
@@ -238,7 +280,7 @@ async def websocket_endpoint(websocket: WebSocket):
             response_actions = response_manager.process_critical_events(critical_events)
             
             # Log analytics — only count violation events, not every frame
-            person_count = len([d for d in detections if d['class'] == 5])
+            person_count = sum(1 for d in detections if _is_person_detection(d))
             analytics.log_frame(person_count, violations if alert_triggered else [])
 
             # Annotate frame
@@ -309,7 +351,7 @@ async def camera_stream_endpoint(websocket: WebSocket):
             response_actions = response_manager.process_critical_events(critical_events)
             
             # Log analytics — only count violation events, not every frame
-            person_count = len([d for d in detections if d['class'] == 5])
+            person_count = sum(1 for d in detections if _is_person_detection(d))
             analytics.log_frame(person_count, violations if alert_triggered else [])
 
             annotated = annotate_frame(processed_frame.copy(), detections, violations)
@@ -343,17 +385,15 @@ async def get_analytics():
 @app.get("/api/violations")
 async def get_recorded_violations():
     """List recorded violation evidence."""
-    import glob
-    files = glob.glob("violations/*.jpg")
-    return {"violations": [os.path.basename(f) for f in files]}
+    files = sorted(VIOLATIONS_DIR.glob("*.jpg"), reverse=True)
+    return {"violations": [f.name for f in files]}
 
 @app.delete("/api/violations")
 async def clear_violations():
     """Delete all violation evidence images."""
-    import glob
-    files = glob.glob("violations/*.jpg")
+    files = list(VIOLATIONS_DIR.glob("*.jpg"))
     for f in files:
-        os.remove(f)
+        f.unlink()
     return {"deleted": len(files)}
 
 @app.get("/health")
@@ -362,7 +402,8 @@ async def health_check():
     return {
         "status": "healthy",
         "device": device,
-        "model_loaded": model is not None
+        "model_loaded": model is not None,
+        "model": loaded_model_ref,
     }
 
 if __name__ == "__main__":
