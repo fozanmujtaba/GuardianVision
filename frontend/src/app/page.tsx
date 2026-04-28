@@ -7,6 +7,17 @@ import {
   Users, Clock, Zap, Shield, Radio, Eye, Cpu,
 } from "lucide-react";
 
+interface Detection { id: number; bbox: number[]; conf: number; class: number; class_name: string; }
+interface Violation { person_id: number; bbox: number[]; violations: string[]; }
+interface CriticalEvent { type: string; location: string; bbox: number[]; }
+interface AlertEntry { id: number; time: string; violations: Violation[]; }
+interface DailyEntry { person_frames: number; violations: number; }
+interface AnalyticsStats {
+  total_violations: number;
+  violations_by_type: Record<string, number>;
+  daily_trends: Record<string, DailyEntry>;
+}
+
 // Per-class badge colours for the detection tag strip
 const CLASS_COLOR: Record<string, string> = {
   "Person":           "bg-cyan-500/15 text-cyan-400 border-cyan-500/30",
@@ -77,8 +88,8 @@ export default function Dashboard() {
   /* ── detection state ── */
   const [personCount, setPersonCount] = useState(0);
   const [detectionTags, setDetectionTags] = useState<{ name: string; count: number }[]>([]);
-  const [alerts, setAlerts] = useState<any[]>([]);
-  const [criticalEvents, setCriticalEvents] = useState<any[]>([]);
+  const [alerts, setAlerts] = useState<AlertEntry[]>([]);
+  const [criticalEvents, setCriticalEvents] = useState<CriticalEvent[]>([]);
   const [isEmergencyMode, setIsEmergencyMode] = useState(false);
   const [sessionViolations, setSessionViolations] = useState(0);
   const [liveCompliance, setLiveCompliance] = useState(100);
@@ -89,7 +100,7 @@ export default function Dashboard() {
 
   /* ── analytics view ── */
   const [showAnalytics, setShowAnalytics] = useState(false);
-  const [stats, setStats] = useState<any>(null);
+  const [stats, setStats] = useState<AnalyticsStats | null>(null);
   const [violationFiles, setViolationFiles] = useState<string[]>([]);
 
   /* ── refs ── */
@@ -188,7 +199,7 @@ export default function Dashboard() {
       }
 
       /* live detections — person count + tag strip */
-      const dets: any[] = meta.detections ?? [];
+      const dets: Detection[] = meta.detections ?? [];
       setPersonCount(dets.filter((d) => d.class === 5).length);
       const tagMap: Record<string, number> = {};
       for (const d of dets) tagMap[d.class_name] = (tagMap[d.class_name] ?? 0) + 1;
@@ -237,7 +248,7 @@ export default function Dashboard() {
   const historicalCompliance = (() => {
     if (!stats) return "—";
     const frames = Object.values(stats.daily_trends ?? {}).reduce(
-      (s: number, d: any) => s + (d.person_frames ?? 0), 0,
+      (s: number, d: DailyEntry) => s + (d.person_frames ?? 0), 0,
     ) as number;
     if (frames === 0) return "N/A";
     const rate = (stats.total_violations ?? 0) / frames;
@@ -255,7 +266,7 @@ export default function Dashboard() {
   const downloadCSV = () => {
     if (!stats) return;
     const rows = [["Date", "Person Frames", "Violations"],
-      ...Object.entries(stats.daily_trends ?? {}).map(([day, d]: [string, any]) =>
+      ...Object.entries(stats.daily_trends ?? {}).map(([day, d]: [string, DailyEntry]) =>
         [day, String(d.person_frames ?? 0), String(d.violations ?? 0)])];
     const blob = new Blob([rows.map((r) => r.join(",")).join("\n")], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -298,10 +309,12 @@ export default function Dashboard() {
       };
 
       // patch onmessage to decrement inFlight
-      const origOnMessage = ws.current.onmessage;
-      ws.current.onmessage = (event) => {
+      if (!ws.current) return;
+      const socket = ws.current;
+      const origOnMessage = socket.onmessage;
+      socket.onmessage = (event) => {
         inFlight = Math.max(0, inFlight - 1);
-        origOnMessage?.call(ws.current, event);
+        origOnMessage?.call(socket, event);
       };
 
       sendIntervalRef.current = setInterval(sendFrame, 50); // 20 fps cap
@@ -681,8 +694,8 @@ export default function Dashboard() {
                   <p className="text-xs text-slate-600 text-center py-6">No violation data yet</p>
                 ) : (
                   <div className="space-y-3">
-                    {Object.entries(stats?.violations_by_type ?? {}).map(([type, count]: [string, any]) => {
-                      const max = Math.max(...Object.values(stats.violations_by_type).map(Number));
+                    {Object.entries(stats?.violations_by_type ?? {}).map(([type, count]: [string, number]) => {
+                      const max = Math.max(...Object.values(stats?.violations_by_type ?? {}).map(Number));
                       const pct = max > 0 ? Math.round((count / max) * 100) : 0;
                       return (
                         <div key={type}>
@@ -713,7 +726,7 @@ export default function Dashboard() {
                   <p className="text-xs text-slate-600 text-center py-6">No session data yet</p>
                 ) : (
                   <div className="space-y-2.5 max-h-52 overflow-y-auto">
-                    {Object.entries(stats?.daily_trends ?? {}).reverse().map(([day, data]: [string, any]) => (
+                    {Object.entries(stats?.daily_trends ?? {}).reverse().map(([day, data]: [string, DailyEntry]) => (
                       <div key={day}
                         className="flex justify-between items-center p-3 rounded-xl bg-slate-800/60 border border-slate-700/50">
                         <div>

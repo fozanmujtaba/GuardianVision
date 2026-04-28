@@ -77,7 +77,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="GuardianVision Backend", lifespan=lifespan)
 
-# Static files for violation snapshots
+# Ensure violations directory exists before mounting static files
+os.makedirs("violations", exist_ok=True)
 app.mount("/violations", StaticFiles(directory="violations"), name="violations")
 
 @app.get("/")

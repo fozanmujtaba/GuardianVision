@@ -8,7 +8,7 @@
 |---|---|
 | Muhammad Faozan Mujtaba | 457570 |
 | Abdul Basit | 462779 |
-| [Third Member Name] | [CMS ID] |
+| Shees ur Rehman | 470810|
 
 **Course:** Deep Learning | **Submission:** End-Semester Project
 

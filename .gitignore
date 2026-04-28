@@ -142,11 +142,13 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
-# Model Files (ignore weights)
-**/*.pt
+# Model Files (ignore large/experimental weights)
 **/*.weights
 **/*.engine
 **/*.mlpackage
+# Ignore all .pt except the deployed inference model
+**/*.pt
+!models/ppe_model.pt
 
 # System files
 .DS_Store

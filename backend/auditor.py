@@ -9,7 +9,7 @@ class PPEAuditor:
     Maps detection boxes to violation logic with stateful alerting.
     """
     
-    def __init__(self, cooldown_seconds: int = 10, persistence_threshold: int = 3):
+    def __init__(self, cooldown_seconds: int = 10, persistence_threshold: int = 10):
         self.cooldown_seconds = cooldown_seconds
         self.persistence_threshold = persistence_threshold
         self.last_alert_time = 0
@@ -89,14 +89,14 @@ class PPEAuditor:
                     self._save_snapshot(frame, person, pers_v, p_id)
                     for v in pers_v: self.snapped_violations[p_id].add(v)
 
-        # 2. Proactive Asset Audit (Equipment presence)
-        extinguishers = [d for d in detections if d['class'] in [self.classes['Fire Extinguisher']]]
-        exit_signs = [d for d in detections if d['class'] in [self.classes['Emergency Exit Sign']]]
-        
-        if not extinguishers:
-            compliance_warnings.append("NO_EXTINGUISHER_IN_VIEW")
-        if not exit_signs:
-            compliance_warnings.append("NO_EXIT_SIGN_IN_VIEW")
+        # 2. Proactive Asset Audit (Equipment presence) — only warn when people are in frame
+        if people:
+            extinguishers = [d for d in detections if d['class'] in [self.classes['Fire Extinguisher']]]
+            exit_signs = [d for d in detections if d['class'] in [self.classes['Emergency Exit Sign']]]
+            if not extinguishers:
+                compliance_warnings.append("NO_EXTINGUISHER_IN_VIEW")
+            if not exit_signs:
+                compliance_warnings.append("NO_EXIT_SIGN_IN_VIEW")
 
         # 3. Process Critical Events (Fire, Smoke, Fall)
         fires = [d for d in detections if d['class'] == self.classes['Fire']]
@@ -116,7 +116,7 @@ class PPEAuditor:
                 del self.persistence_counters[rid]
                 del self.snapped_violations[rid]
 
-        if (active_violations or critical_events or compliance_warnings) and not cooldown_active:
+        if (active_violations or critical_events) and not cooldown_active:
             self.last_alert_time = current_time
             alert_triggered = True
             
