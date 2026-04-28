@@ -199,13 +199,27 @@ export default function Dashboard() {
 
   /* ── WebSocket connection ── */
   useEffect(() => {
-    ws.current = new WebSocket("ws://127.0.0.1:8000/ws");
-    ws.current.binaryType = "arraybuffer";
+    const socket = new WebSocket("ws://127.0.0.1:8000/ws");
+    let disposed = false;
+    ws.current = socket;
+    socket.binaryType = "arraybuffer";
 
-    ws.current.onopen = () => setIsConnected(true);
-    ws.current.onclose = () => { setIsConnected(false); stopWebcam(); };
+    socket.onopen = () => {
+      if (disposed) {
+        socket.close();
+        return;
+      }
+      setIsConnected(true);
+    };
+    socket.onclose = () => {
+      if (disposed) return;
+      if (ws.current === socket) ws.current = null;
+      setIsConnected(false);
+      stopWebcam();
+    };
 
-    ws.current.onmessage = (event) => {
+    socket.onmessage = (event) => {
+      if (disposed) return;
       if (!(event.data instanceof ArrayBuffer)) {
         pendingFrameRef.current = false;
         inFlightRef.current = Math.max(0, inFlightRef.current - 1);
@@ -271,7 +285,13 @@ export default function Dashboard() {
       }
     };
 
-    return () => { ws.current?.close(); stopWebcam(); };
+    return () => {
+      disposed = true;
+      if (ws.current === socket) ws.current = null;
+      if (socket.readyState === WebSocket.OPEN) socket.close();
+      if (socket.readyState === WebSocket.CONNECTING) socket.onopen = () => socket.close();
+      stopWebcam();
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
