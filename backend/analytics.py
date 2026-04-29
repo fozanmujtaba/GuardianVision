@@ -15,7 +15,10 @@ class AnalyticsManager:
         if os.path.exists(self.stats_file):
             try:
                 with open(self.stats_file, 'r') as f:
-                    return json.load(f)
+                    stats = json.load(f)
+                    by_type_total = sum(int(v) for v in stats.get("violations_by_type", {}).values())
+                    stats["total_violations"] = max(int(stats.get("total_violations", 0)), by_type_total)
+                    return stats
             except:
                 pass
         return {
@@ -36,14 +39,18 @@ class AnalyticsManager:
         self.stats["daily_stats"][today]["person_frames"] += person_count
         
         for v in violations:
-            self.stats["daily_stats"][today]["violations"] += 1
-            self.stats["total_violations"] += 1
-            for v_type in v["violations"]:
+            violation_types = list(v.get("violations", []))
+            self.stats["daily_stats"][today]["violations"] += len(violation_types)
+            self.stats["total_violations"] += len(violation_types)
+            for v_type in violation_types:
                 v_name = str(v_type)
                 if not isinstance(self.stats["violations_by_type"], dict):
                     self.stats["violations_by_type"] = {}
                 
                 self.stats["violations_by_type"][v_name] = self.stats["violations_by_type"].get(v_name, 0) + 1
+        
+        if violations:
+            self.save_stats()
         
         # Periodic save (or caller saves)
         # self.save_stats()

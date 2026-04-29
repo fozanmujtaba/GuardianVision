@@ -135,6 +135,7 @@ export default function Dashboard() {
   const [personCount, setPersonCount] = useState(0);
   const [detectionTags, setDetectionTags] = useState<{ name: string; count: number }[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [activeViolations, setActiveViolations] = useState<Violation[]>([]);
   const [criticalEvents, setCriticalEvents] = useState<CriticalEvent[]>([]);
   const [isEmergencyMode, setIsEmergencyMode] = useState(false);
   const [sessionViolations, setSessionViolations] = useState(0);
@@ -252,8 +253,10 @@ export default function Dashboard() {
 
       /* violations */
       const frameViolations = meta.violations ?? [];
+      setActiveViolations(frameViolations);
       if (meta.alert && frameViolations.length) {
-        sessionViolationsRef.current += frameViolations.length;
+        const violationCount = frameViolations.reduce((sum, v) => sum + v.violations.length, 0);
+        sessionViolationsRef.current += violationCount;
         setSessionViolations(sessionViolationsRef.current);
         playBeep();
         setAlerts((prev) => [
@@ -323,8 +326,9 @@ export default function Dashboard() {
       (s, d) => s + (d.person_frames ?? 0), 0,
     );
     if (frames === 0) return "N/A";
-    const rate = (stats.total_violations ?? 0) / frames;
-    return `${Math.max(0, Math.min(100, Math.round((1 - rate) * 100)))}%`;
+    const sustainedViolationFrames = (stats.total_violations ?? 0) * 60;
+    const score = Math.round((Math.max(0, frames - sustainedViolationFrames) / frames) * 100);
+    return `${Math.max(0, Math.min(100, score))}%`;
   })();
 
   const clearGallery = async () => {
@@ -395,6 +399,9 @@ export default function Dashboard() {
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     setStream(null);
+    setActiveViolations([]);
+    setLiveCompliance(100);
+    complianceWindowRef.current = [];
     pendingFrameRef.current = false;
     inFlightRef.current = 0;
   }, []);
@@ -635,32 +642,37 @@ export default function Dashboard() {
               <div className="flex items-center gap-2 mb-4">
                 <ShieldAlert size={14} className="text-rose-500" />
                 <span className="text-[11px] font-black uppercase tracking-wider">Active Violations</span>
-                {alerts.length > 0 && (
+                {activeViolations.length > 0 && (
                   <span className="ml-auto bg-rose-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full">
-                    {alerts.length}
+                    {activeViolations.reduce((sum, v) => sum + v.violations.length, 0)}
+                  </span>
+                )}
+                {activeViolations.length === 0 && alerts.length > 0 && (
+                  <span className="ml-auto text-[9px] font-black uppercase tracking-wider text-slate-600">
+                    {alerts.length} recent
                   </span>
                 )}
               </div>
 
               <div className="space-y-2.5 overflow-y-auto flex-1 pr-0.5" style={{ maxHeight: "280px" }}>
-                {alerts.length === 0 ? (
+                {activeViolations.length === 0 ? (
                   <div className="flex items-center gap-3 p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/15 text-emerald-500">
                     <CheckCircle size={17} />
                     <span className="text-xs font-semibold">All personnel compliant</span>
                   </div>
                 ) : (
-                  alerts.map((alert) => (
-                    <div key={alert.id}
+                  activeViolations.map((violation) => (
+                    <div key={`${violation.person_id}-${violation.violations.join("-")}`}
                       className="bg-rose-500/5 border border-rose-500/20 p-3 rounded-xl">
                       <div className="flex justify-between items-center mb-2">
                         <div className="flex items-center gap-1.5 text-rose-400">
                           <AlertTriangle size={11} />
                           <span className="font-black text-[10px] uppercase">PPE Violation</span>
                         </div>
-                        <span className="text-[9px] text-slate-600 font-mono">{alert.time}</span>
+                        <span className="text-[9px] text-slate-600 font-mono">Person {violation.person_id}</span>
                       </div>
                       <div className="flex gap-1.5 flex-wrap">
-                        {alert.violations?.[0]?.violations?.map((v: string) => (
+                        {violation.violations.map((v: string) => (
                           <span key={v}
                             className="bg-rose-500/20 text-rose-300 px-2 py-0.5 rounded text-[9px] font-black uppercase border border-rose-500/20">
                             No {v}

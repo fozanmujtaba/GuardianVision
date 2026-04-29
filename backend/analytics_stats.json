@@ -1,1 +1,1 @@
-{"daily_stats": {"2026-04-23": {"violations": 3, "person_frames": 524}}, "total_violations": 3, "violations_by_type": {"Hardhat": 3, "Safety Vest": 1}}
+{"daily_stats": {"2026-04-23": {"violations": 3, "person_frames": 524}, "2026-04-29": {"violations": 40, "person_frames": 4178}}, "total_violations": 44, "violations_by_type": {"Hardhat": 23, "Safety Vest": 21}}

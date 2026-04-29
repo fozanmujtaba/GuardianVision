@@ -84,12 +84,16 @@ class PPEAuditor:
         persistence_threshold: int = 10,
         class_names: Optional[Dict[int, str]] = None,
         snapshot_dir: os.PathLike = "violations",
+        demo_missing_ppe: Optional[bool] = None,
     ):
         self.cooldown_seconds = cooldown_seconds
         self.persistence_threshold = persistence_threshold
         self.last_alert_time = 0.0
         self.persistence_counters: Dict[object, Dict[str, int]] = {}
         self.snapped_violations: Dict[object, Set[str]] = {}
+        if demo_missing_ppe is None:
+            demo_missing_ppe = os.environ.get("DEMO_MISSING_PPE", "true").lower() not in {"0", "false", "no"}
+        self.demo_missing_ppe = demo_missing_ppe
         self.snapshot_dir = Path(snapshot_dir)
         self.snapshot_dir.mkdir(parents=True, exist_ok=True)
         self.update_class_names(class_names or DEFAULT_SAFETY_CLASSES)
@@ -110,6 +114,16 @@ class PPEAuditor:
         neg_hardhats = [d for d in detections if self._has_class(d, "NO-Hardhat")]
         pos_vests = [d for d in detections if self._has_class(d, "Safety Vest")]
         neg_vests = [d for d in detections if self._has_class(d, "NO-Safety Vest")]
+        infer_missing_hardhat = bool(self.class_ids.get("Hardhat")) or (
+            self.demo_missing_ppe
+            and not self.class_ids.get("Hardhat")
+            and not self.class_ids.get("NO-Hardhat")
+        )
+        infer_missing_vest = bool(self.class_ids.get("Safety Vest")) or (
+            self.demo_missing_ppe
+            and not self.class_ids.get("Safety Vest")
+            and not self.class_ids.get("NO-Safety Vest")
+        )
 
         active_violations = []
         alert_triggered = False
@@ -132,19 +146,19 @@ class PPEAuditor:
 
             has_no_hardhat = any(self._box_is_inside(d["bbox"], p_box) for d in neg_hardhats)
             has_hardhat = any(self._box_is_inside(d["bbox"], p_box) for d in pos_hardhats)
-            hardhat_signal_seen = bool(pos_hardhats or neg_hardhats)
-            if has_no_hardhat or (hardhat_signal_seen and not has_hardhat):
+            if has_no_hardhat or (infer_missing_hardhat and not has_hardhat):
                 self.persistence_counters[p_id]["Hardhat"] += 1
             else:
                 self.persistence_counters[p_id]["Hardhat"] = 0
+                self.snapped_violations[p_id].discard("Hardhat")
 
             has_no_vest = any(self._box_is_inside(d["bbox"], p_box) for d in neg_vests)
             has_vest = any(self._box_is_inside(d["bbox"], p_box) for d in pos_vests)
-            vest_signal_seen = bool(pos_vests or neg_vests)
-            if has_no_vest or (vest_signal_seen and not has_vest):
+            if has_no_vest or (infer_missing_vest and not has_vest):
                 self.persistence_counters[p_id]["Safety Vest"] += 1
             else:
                 self.persistence_counters[p_id]["Safety Vest"] = 0
+                self.snapped_violations[p_id].discard("Safety Vest")
 
             persistent_violations = []
             if self.persistence_counters[p_id]["Hardhat"] >= self.persistence_threshold:
@@ -181,6 +195,12 @@ class PPEAuditor:
             alert_triggered = True
 
         return active_violations, alert_triggered, critical_events
+
+    def reset_evidence_state(self):
+        """Allow cleared galleries or demo resets to capture fresh snapshots."""
+        self.last_alert_time = 0.0
+        for snapped in self.snapped_violations.values():
+            snapped.clear()
 
     def _coerce_class_names(self, class_names: Dict[int, str]) -> Dict[int, str]:
         if isinstance(class_names, dict):
@@ -219,7 +239,7 @@ class PPEAuditor:
         import cv2
         from datetime import datetime
 
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         labels_str = "_".join(label.replace(" ", "").lower() for label in labels)
         evidence_frame = frame.copy()
         x1, y1, x2, y2 = map(int, obj["bbox"])

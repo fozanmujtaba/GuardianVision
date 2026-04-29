@@ -394,6 +394,8 @@ async def clear_violations():
     files = list(VIOLATIONS_DIR.glob("*.jpg"))
     for f in files:
         f.unlink()
+    if auditor is not None:
+        auditor.reset_evidence_state()
     return {"deleted": len(files)}
 
 @app.get("/health")
@@ -404,6 +406,7 @@ async def health_check():
         "device": device,
         "model_loaded": model is not None,
         "model": loaded_model_ref,
+        "demo_missing_ppe": bool(getattr(auditor, "demo_missing_ppe", False)) if auditor else False,
     }
 
 if __name__ == "__main__":
